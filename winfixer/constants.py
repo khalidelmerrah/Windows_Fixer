@@ -2,7 +2,7 @@ import os
 from datetime import date
 
 APP_ID = "WindowsFixer"
-APP_VERSION = "v1.1.0"
+APP_VERSION = "v1.2.0"
 BUILD_DATE = os.environ.get("BUILD_DATE", date.today().isoformat())
 
 DONATE_PAGE = "https://buymeacoffee.com/ilukezippo"

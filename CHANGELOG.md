@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.2.0] - 2026-04-16 (commit: 1f194a1)
+### Changed
+- Complete UI redesign using CustomTkinter (replaces raw tkinter/ttk)
+- Modern dark theme by default with automatic system detection
+- Rounded corner frames for all sections (system info, options, progress, log)
+- Clean styled checkboxes, radio buttons, and combo boxes
+- Color-coded action buttons (green Start, red Cancel, outlined secondary)
+- Consolas monospace font in log textbox
+- Top bar with outlined utility buttons (Theme, Language, Updates, About)
+- Smooth CTk progress bar
+- Redesigned About dialog with side-by-side credit cards and colored feature chips
+- Fork URLs now point to khalidelmerrah/Windows_Fixer for update checks
+
+### Fixed
+- Window invisible on launch due to withdraw/deiconify incompatibility with CustomTkinter
+
+### Added
+- customtkinter as new dependency
+
 ## [1.1.0] - 2026-04-16 (commit: 659257f)
 ### Added
 - Modular architecture: split single-file into `winfixer/` package (constants, utils, commands, translations, sysinfo, ui)
