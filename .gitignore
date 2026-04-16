@@ -4,3 +4,7 @@ dist/
 build/
 *.spec
 *.egg-info/
+.vault/
+crash_log.txt
+error.log
+release_out/
