@@ -1,76 +1,80 @@
-# Windows Fixer
+# Windows Fixer - Windows Repair & Cleanup Tool
 
-A lightweight Windows repair and cleanup tool with a modern GUI. Combines common Windows repair commands (DISM, SFC, CHKDSK) with safe cleanup utilities - all in one place, with progress tracking and logging.
+[![Download](https://img.shields.io/github/v/release/khalidelmerrah/Windows_Fixer?label=Download&style=for-the-badge&color=0078d4)](https://github.com/khalidelmerrah/Windows_Fixer/releases/latest)
+[![License](https://img.shields.io/badge/License-Freeware-green?style=for-the-badge)](LICENSE)
+[![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-blue?style=for-the-badge)](https://github.com/khalidelmerrah/Windows_Fixer/releases/latest)
 
-> **Forked from [ilukezippo/Windows_Fixer](https://github.com/ilukezippo/Windows_Fixer)** - Original author: [ilukezippo (BoYaqoub)](https://github.com/ilukezippo)
+A free, open-source Windows system repair and PC cleanup utility with a modern dark GUI. Fix Windows errors, repair corrupted system files, clean temp files, reset network, and check disk health - all from one tool with no installation required.
+
+Runs **DISM**, **SFC /scannow**, **CHKDSK**, **Winsock reset**, **DNS flush**, and safe cleanup operations with real-time progress tracking and logging.
+
+> Forked from [ilukezippo/Windows_Fixer](https://github.com/ilukezippo/Windows_Fixer) - Original author: [ilukezippo (BoYaqoub)](https://github.com/ilukezippo)
 
 ## Download
 
-**[Download Latest Release (EXE)](https://github.com/khalidelmerrah/Windows_Fixer/releases/latest)**
+**[Download WindowsFixer.exe (latest release)](https://github.com/khalidelmerrah/Windows_Fixer/releases/latest)** - No installation needed. Just download and run.
 
-No installation needed - just download, extract, and run. Requires Windows 10/11.
+## Why use Windows Fixer?
+
+- **One-click Windows repair** - No need to memorize DISM, SFC, or CHKDSK commands
+- **Safe** - Creates a System Restore point before making any changes
+- **Modern UI** - Dark/light theme, progress tracking, live log output
+- **Portable** - Single EXE, no installation, no dependencies
+- **Free and open source** - No ads, no telemetry, no premium tier
 
 ## Features
 
-### Repair Tools
-- Check Windows Image Health (DISM ScanHealth)
-- Repair Windows Image (DISM RestoreHealth)
-- Repair System Files (SFC /scannow)
-- Check Disk for errors (CHKDSK) with drive selection and scan/fix modes
-- Reset Network Stack (Winsock + TCP/IP)
+### Windows Repair Tools
+- **DISM ScanHealth** - Check Windows image integrity for corruption
+- **DISM RestoreHealth** - Repair corrupted Windows system image using Windows Update
+- **SFC /scannow** - Scan and repair protected Windows system files
+- **CHKDSK** - Check disk for file system errors with scan-only or fix mode
+- **Network Reset** - Reset Winsock and TCP/IP stack to fix network issues
 
-### Cleanup Tools
-- Clean Temporary Files (user + system)
-- Clean Prefetch Files
-- Empty Recycle Bin
-- Flush DNS Cache
-- DISM Component Store Cleanup
-- Clear Windows Update Download Cache
+### PC Cleanup Tools
+- **Clean Temp Files** - Delete user and system temporary files
+- **Clean Prefetch** - Clear Windows Prefetch cache
+- **Empty Recycle Bin** - Free disk space by clearing deleted files
+- **Flush DNS Cache** - Reset DNS resolver cache to fix browsing issues
+- **DISM Component Cleanup** - Remove superseded Windows component versions
+- **Clear Windows Update Cache** - Stop update services and clean downloaded update files
 
-### Safety
-- **System Restore Point** - Automatically creates a restore point before repairs so you can undo changes if needed
-- Admin detection with optional "Always Run as Admin"
-- Skip or cancel any operation mid-run
+### Safety & Recovery
+- **System Restore Point** - Automatically creates a restore point before any repair operation
+- **Admin detection** - Detects privilege level and offers elevation when needed
+- **Skip / Cancel** - Stop or skip any operation mid-run
 
-### System Info Panel
-- OS version and build number
-- CPU model
-- RAM total, free, and usage percentage
+### System Information
+- Windows version and build number
+- CPU model and architecture
+- RAM total, available, and usage percentage
 - Disk space total, free, and usage percentage
 - System uptime
 
 ### User Experience
-- **Dark / Light theme** toggle (saved between sessions)
-- **Save Log** - Export the full log to a timestamped file
-- Select All checkbox for quick operation selection
-- Progress bar with step tracking
-- Full live log window
-- English / Arabic language support
-
-## Screenshots
-
-*Run the app to see the interface - features a clean two-column layout with repair tools on the left and cleanup tools on the right.*
+- **Modern CustomTkinter UI** - Clean dark theme with rounded corners and styled controls
+- **Dark / Light theme** toggle saved between sessions
+- **Save Log** - Export the full operation log to a timestamped file
+- **English / Arabic** language support
+- **Progress bar** with step-by-step tracking
 
 ## Requirements
 
-### To run from source
-- Windows 10 / 11
-- Python 3.9+
-- Pillow (for About window graphics)
+### Download and run (recommended)
+- Windows 10 or Windows 11
+- That's it - the EXE is self-contained
 
+### Run from source
 ```bash
-pip install pillow
+pip install pillow customtkinter
 python windows_fixer.py
 ```
 
-### To build the EXE yourself
-
+### Build the EXE yourself
 ```bash
-pip install pillow pyinstaller
-pyinstaller --onefile --noconsole --name windows_fixer --collect-all winfixer --icon icon.ico --add-data "icon.ico;." --add-data "kuwait.png;." --add-data "Success.wav;." windows_fixer.py
+pip install pillow customtkinter pyinstaller
+pyinstaller --onefile --noconsole --name WindowsFixer --collect-all winfixer --collect-all customtkinter --icon icon.ico --add-data "icon.ico;." --add-data "kuwait.png;." --add-data "Success.wav;." windows_fixer.py
 ```
-
-Output: `dist/windows_fixer.exe`
 
 ## Project Structure
 
@@ -78,7 +82,7 @@ Output: `dist/windows_fixer.exe`
 windows_fixer.py          Entry point
 winfixer/
   constants.py            Version, URLs, dimensions
-  utils.py                Resource loading, settings, admin helpers, images, sound
+  utils.py                Resource loading, settings, admin helpers
   commands.py             CommandRunner, cleanup functions, restore points
   translations.py         English + Arabic translation dictionaries
   sysinfo.py              System info (OS, CPU, RAM, disk, uptime)
@@ -87,29 +91,29 @@ winfixer/
 
 ## What changed from the original
 
-This fork adds the following on top of the [original project](https://github.com/ilukezippo/Windows_Fixer):
+This fork builds on the [original project](https://github.com/ilukezippo/Windows_Fixer) with:
 
-### Security Hardening (v1.0.1)
-- Fixed command injection vulnerability in CHKDSK fix mode
+### Security Hardening
+- Fixed command injection vulnerability in CHKDSK
 - Fixed argument injection in admin relaunch
-- Added input validation for drive letters, settings, resource paths, and API responses
-- Replaced silent error swallowing with specific exception handling and logging
+- Input validation for drive letters, settings, resource paths, API responses
 - Thread-safe cancel/skip signals using `threading.Event`
+- Specific exception handling instead of silent error swallowing
 
-### New Features (v1.1.0)
-- Modular package architecture (split from single 1,150-line file)
+### New Features
+- Complete UI redesign with CustomTkinter (modern dark theme)
 - System Restore point creation before repairs
-- Save Log button for exporting log contents
 - System Info panel (OS, CPU, RAM, disk, uptime)
+- Save Log to file
 - Dark/Light theme toggle
-- Improved settings validation with schema enforcement
+- Modular package architecture
 
 See [CHANGELOG.md](CHANGELOG.md) for full version history.
 
 ## Credits
 
 - **Original Author:** [ilukezippo (BoYaqoub)](https://github.com/ilukezippo) - Created the original Windows Fixer
-- **Fork Maintainer:** [khalidelmerrah](https://github.com/khalidelmerrah) - Security hardening, new features, modular architecture
+- **Fork Maintainer:** [khalidelmerrah](https://github.com/khalidelmerrah) - Security hardening, CustomTkinter UI, new features
 
 ## License
 
