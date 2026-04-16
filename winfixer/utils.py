@@ -53,9 +53,9 @@ def apply_icon_to_tlv(tlv, icon):
             pass
 
 
-def load_flag_image():
-    """Load the Kuwait flag image for the About dialog."""
-    png = resource_path("kuwait.png")
+def load_flag_image(name="kuwait"):
+    """Load a flag image for the About dialog."""
+    png = resource_path(f"{name}.png")
     if os.path.exists(png):
         try:
             return tk.PhotoImage(file=png)

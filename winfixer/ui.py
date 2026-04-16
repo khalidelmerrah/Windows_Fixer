@@ -816,11 +816,11 @@ class App(ctk.CTk):
             font=ctk.CTkFont(size=13, weight="bold"),
         ).pack(side="left")
 
-        flag = load_flag_image()
-        if flag:
-            fl = tk.Label(orig_name, image=flag, bd=0, highlightthickness=0)
+        flag_kw = load_flag_image("kuwait")
+        if flag_kw:
+            fl = tk.Label(orig_name, image=flag_kw, bd=0, highlightthickness=0)
             fl.pack(side="left", padx=(8, 0))
-            win._flag = flag
+            win._flag_kw = flag_kw
 
         orig_link = ctk.CTkButton(
             orig, text="View original project", width=160, height=26,
@@ -839,10 +839,18 @@ class App(ctk.CTk):
             font=ctk.CTkFont(size=10, weight="bold"), text_color=ACCENT_GREEN,
         ).pack(anchor="w", padx=14, pady=(12, 2))
 
+        fork_name = ctk.CTkFrame(fork, fg_color="transparent")
+        fork_name.pack(anchor="w", padx=14, pady=(0, 4))
         ctk.CTkLabel(
-            fork, text="Khalid El Merrah",
+            fork_name, text="Khalid El Merrah",
             font=ctk.CTkFont(size=13, weight="bold"),
-        ).pack(anchor="w", padx=14, pady=(0, 4))
+        ).pack(side="left")
+
+        flag_ma = load_flag_image("morocco")
+        if flag_ma:
+            fl2 = tk.Label(fork_name, image=flag_ma, bd=0, highlightthickness=0)
+            fl2.pack(side="left", padx=(8, 0))
+            win._flag_ma = flag_ma
 
         fork_link = ctk.CTkButton(
             fork, text="View fork", width=100, height=26,

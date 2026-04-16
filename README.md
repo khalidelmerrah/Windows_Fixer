@@ -117,7 +117,9 @@ See [CHANGELOG.md](CHANGELOG.md) for full version history.
 ## Credits
 
 - **Original Author:** [ilukezippo (BoYaqoub)](https://github.com/ilukezippo) - Created the original Windows Fixer
-- **Fork Maintainer:** [khalidelmerrah](https://github.com/khalidelmerrah) - Security hardening, CustomTkinter UI, new features
+- **Fork Maintainer:** [Khalid El Merrah](https://github.com/khalidelmerrah) - Security hardening, CustomTkinter UI, new features
+
+Made with love from Kuwait and Morocco
 
 ## License
 

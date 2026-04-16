@@ -40,6 +40,9 @@ jobs:
           if (Test-Path "kuwait.png") {
             $args += @("--add-data", "kuwait.png;.")
           }
+          if (Test-Path "morocco.png") {
+            $args += @("--add-data", "morocco.png;.")
+          }
 
           # Bundle wav into EXE as fallback
           if (Test-Path "success.wav") {
