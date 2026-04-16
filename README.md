@@ -14,6 +14,10 @@ Runs **DISM**, **SFC /scannow**, **CHKDSK**, **Winsock reset**, **DNS flush**, a
 
 **[Download WindowsFixer.exe (latest release)](https://github.com/khalidelmerrah/Windows_Fixer/releases/latest)** - No installation needed. Just download and run.
 
+## Screenshot
+
+![Windows Fixer v1.2.0](screenshot.png)
+
 ## Why use Windows Fixer?
 
 - **One-click Windows repair** - No need to memorize DISM, SFC, or CHKDSK commands
