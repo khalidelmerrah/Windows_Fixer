@@ -1,4 +1,4 @@
-"""Main application UI for Windows Fixer."""
+"""Main application UI for Windows Fixer - built with CustomTkinter."""
 
 import os
 import re
@@ -6,16 +6,18 @@ import json
 import queue
 import threading
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import messagebox, filedialog
+import customtkinter as ctk
 import webbrowser
 from datetime import datetime
 
 from winfixer.constants import (
     APP_VERSION, BUILD_DATE, WIN_W, WIN_H,
-    DONATE_PAGE, GITHUB_PAGE, GITHUB_API_LATEST, GITHUB_RELEASES_PAGE,
+    DONATE_PAGE, GITHUB_PAGE_ORIGINAL, GITHUB_PAGE_FORK,
+    GITHUB_API_LATEST, GITHUB_RELEASES_PAGE,
 )
 from winfixer.utils import (
-    set_app_icon, apply_icon_to_tlv, load_flag_image, make_donate_image,
+    set_app_icon, apply_icon_to_tlv, load_flag_image,
     play_success_sound, load_settings, save_settings, is_admin, relaunch_as_admin,
     list_drives,
 )
@@ -27,56 +29,22 @@ from winfixer.translations import translate
 from winfixer import sysinfo
 
 
-# ---------- Dark/Light theme colors ----------
-
-THEMES = {
-    "light": {
-        "bg": "#f0f0f0",
-        "fg": "#000000",
-        "text_bg": "#ffffff",
-        "text_fg": "#000000",
-        "desc_fg": "#666666",
-        "link_fg": "#1a73e8",
-        "accent": "#0078d4",
-        "sysinfo_bg": "#e8f0fe",
-        "sysinfo_fg": "#1a3a5c",
-    },
-    "dark": {
-        "bg": "#1e1e1e",
-        "fg": "#d4d4d4",
-        "text_bg": "#252526",
-        "text_fg": "#cccccc",
-        "desc_fg": "#888888",
-        "link_fg": "#569cd6",
-        "accent": "#569cd6",
-        "sysinfo_bg": "#2d2d30",
-        "sysinfo_fg": "#9cdcfe",
-    },
-}
+# Color palette
+ACCENT_BLUE = "#0078d4"
+ACCENT_GREEN = "#10893e"
+ACCENT_RED = "#c42b1c"
+ACCENT_GOLD = "#d4940a"
 
 
-def add_option_with_desc(parent, text, desc, variable, wrap=560, desc_fg="#666666"):
-    row = ttk.Frame(parent)
-    row.pack(fill="x", anchor="w", pady=(6, 0))
-
-    cb = ttk.Checkbutton(row, text=text, variable=variable)
-    cb.pack(anchor="w")
-
-    lbl = ttk.Label(row, text=desc, foreground=desc_fg, wraplength=wrap)
-    lbl.pack(anchor="w", padx=(26, 0))
-    return cb, lbl
-
-
-class App(tk.Tk):
+class App(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.withdraw()
-
         self.settings = load_settings()
         self.lang = self.settings.get("language", "en")
-        self.current_theme = self.settings.get("theme", "light")
-        self.var_always_admin = tk.BooleanVar(value=bool(self.settings.get("always_admin", False)))
+        theme = self.settings.get("theme", "dark")
+        ctk.set_appearance_mode(theme)
+        ctk.set_default_color_theme("blue")
 
         self.icon_path = set_app_icon(self)
 
@@ -85,50 +53,42 @@ class App(tk.Tk):
         self.worker_thread = None
         self.running = False
 
-        self.var_select_all = tk.BooleanVar(value=False)
-        self._select_all_guard = False
-
         # Repair options
-        self.var_restore_point = tk.BooleanVar(value=True)
-        self.var_dism_scan = tk.BooleanVar(value=False)
-        self.var_dism_restore = tk.BooleanVar(value=True)
-        self.var_sfc = tk.BooleanVar(value=True)
-        self.var_chkdsk = tk.BooleanVar(value=False)
-        self.var_chkdsk_mode = tk.StringVar(value="scan")
-        self.var_drive = tk.StringVar(value="C:")
-        self.var_reset_network = tk.BooleanVar(value=False)
+        self.var_restore_point = ctk.BooleanVar(value=True)
+        self.var_dism_scan = ctk.BooleanVar(value=False)
+        self.var_dism_restore = ctk.BooleanVar(value=True)
+        self.var_sfc = ctk.BooleanVar(value=True)
+        self.var_chkdsk = ctk.BooleanVar(value=False)
+        self.var_chkdsk_mode = ctk.StringVar(value="scan")
+        self.var_drive = ctk.StringVar(value="C:")
+        self.var_reset_network = ctk.BooleanVar(value=False)
 
         # Cleanup options
-        self.var_temp = tk.BooleanVar(value=True)
-        self.var_prefetch = tk.BooleanVar(value=False)
-        self.var_recycle_bin = tk.BooleanVar(value=True)
-        self.var_flush_dns = tk.BooleanVar(value=False)
-        self.var_dism_component_cleanup = tk.BooleanVar(value=False)
-        self.var_wu_cache = tk.BooleanVar(value=False)
+        self.var_temp = ctk.BooleanVar(value=True)
+        self.var_prefetch = ctk.BooleanVar(value=False)
+        self.var_recycle_bin = ctk.BooleanVar(value=True)
+        self.var_flush_dns = ctk.BooleanVar(value=False)
+        self.var_dism_component_cleanup = ctk.BooleanVar(value=False)
+        self.var_wu_cache = ctk.BooleanVar(value=False)
 
         self._all_option_vars = [
             self.var_restore_point,
-            self.var_dism_scan,
-            self.var_dism_restore,
-            self.var_sfc,
-            self.var_chkdsk,
-            self.var_reset_network,
-            self.var_temp,
-            self.var_prefetch,
-            self.var_recycle_bin,
-            self.var_flush_dns,
-            self.var_dism_component_cleanup,
-            self.var_wu_cache,
+            self.var_dism_scan, self.var_dism_restore, self.var_sfc,
+            self.var_chkdsk, self.var_reset_network,
+            self.var_temp, self.var_prefetch, self.var_recycle_bin,
+            self.var_flush_dns, self.var_dism_component_cleanup, self.var_wu_cache,
         ]
 
-        self.var_step_text = tk.StringVar(value="Idle")
+        self.var_select_all = ctk.BooleanVar(value=False)
+        self._select_all_guard = False
+
+        self.var_step_text = ctk.StringVar(value="Idle")
         self.total_steps = 0
 
         self.title(f"Windows Fixer {APP_VERSION}")
         self.geometry(f"{WIN_W}x{WIN_H}")
         self.minsize(1180, 880)
 
-        self.create_menu()
         self.create_ui()
         self.refresh_drive_list()
 
@@ -137,80 +97,44 @@ class App(tk.Tk):
 
         for v in self._all_option_vars:
             v.trace_add("write", lambda *_: self.update_select_all_state())
-
         self.var_select_all.trace_add("write", lambda *_: self.on_select_all_toggled())
 
         self.after(80, self.flush_log_queue)
         self.apply_language()
-        self.apply_theme()
         self.update_select_all_state()
 
         self.after(800, lambda: self.check_latest_app_version_async(show_if_latest=False))
 
-        self.deiconify()
-        self.after(50, self.center_window)
-        self.lift()
-        self.focus_force()
+        self.after(50, self._center)
 
-    # ---------- Translation helper ----------
+    # ---------- Translation ----------
     def t(self, key: str) -> str:
         return translate(self.lang, key)
 
     # ---------- Theme ----------
-    def apply_theme(self):
-        colors = THEMES[self.current_theme]
-
-        self.configure(bg=colors["bg"])
-
-        style = ttk.Style()
-        style.theme_use("clam")
-
-        style.configure(".", background=colors["bg"], foreground=colors["fg"])
-        style.configure("TFrame", background=colors["bg"])
-        style.configure("TLabel", background=colors["bg"], foreground=colors["fg"])
-        style.configure("TLabelframe", background=colors["bg"], foreground=colors["fg"])
-        style.configure("TLabelframe.Label", background=colors["bg"], foreground=colors["fg"])
-        style.configure("TCheckbutton", background=colors["bg"], foreground=colors["fg"])
-        style.configure("TRadiobutton", background=colors["bg"], foreground=colors["fg"])
-        style.configure("TButton", background=colors["bg"], foreground=colors["fg"])
-        style.configure("Desc.TLabel", background=colors["bg"], foreground=colors["desc_fg"])
-        style.configure("SysInfo.TLabel", background=colors["sysinfo_bg"], foreground=colors["sysinfo_fg"])
-        style.configure("SysInfo.TFrame", background=colors["sysinfo_bg"])
-
-        if hasattr(self, "txt"):
-            self.txt.configure(bg=colors["text_bg"], fg=colors["text_fg"],
-                               insertbackground=colors["text_fg"])
-
-        # Update desc labels to use theme color
-        if hasattr(self, "desc_dism_scan"):
-            for attr_name in dir(self):
-                if attr_name.startswith("desc_"):
-                    widget = getattr(self, attr_name, None)
-                    if isinstance(widget, (ttk.Label, tk.Label)):
-                        try:
-                            widget.configure(foreground=colors["desc_fg"])
-                        except Exception:
-                            pass
-
-        # Update sysinfo panel
-        if hasattr(self, "sysinfo_frame"):
-            self.sysinfo_frame.configure(style="SysInfo.TFrame")
-            for child in self.sysinfo_frame.winfo_children():
-                if isinstance(child, ttk.Label):
-                    child.configure(style="SysInfo.TLabel")
-
     def toggle_theme(self):
-        self.current_theme = "dark" if self.current_theme == "light" else "light"
-        self.settings["theme"] = self.current_theme
+        new = "light" if ctk.get_appearance_mode().lower() == "dark" else "dark"
+        ctk.set_appearance_mode(new)
+        self.settings["theme"] = new
         save_settings(self.settings)
-        self.apply_theme()
+
+    # ---------- Center ----------
+    def _center(self):
+        self.update_idletasks()
+        w, h = self.winfo_width(), self.winfo_height()
+        x = (self.winfo_screenwidth() - w) // 2
+        y = (self.winfo_screenheight() - h) // 2
+        self.geometry(f"{w}x{h}+{x}+{y}")
+
+    def _center_child(self, win):
+        win.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() - win.winfo_width()) // 2
+        y = self.winfo_y() + (self.winfo_height() - win.winfo_height()) // 2
+        win.geometry(f"+{x}+{y}")
 
     # ---------- Update checker ----------
     def _parse_ver_tuple(self, v: str):
         return tuple(int(n) for n in re.findall(r"\d+", v)[:4]) or (0,)
-
-    def manual_check_for_update(self):
-        self.check_latest_app_version_async(show_if_latest=True)
 
     def check_latest_app_version_async(self, show_if_latest: bool = False):
         import urllib.request
@@ -220,159 +144,330 @@ class App(tk.Tk):
                 req = urllib.request.Request(GITHUB_API_LATEST, headers={"User-Agent": "Windows-Fixer"})
                 with urllib.request.urlopen(req, timeout=10) as r:
                     data = json.loads(r.read().decode("utf-8", "replace"))
-
                 raw_tag = str(data.get("tag_name") or data.get("name") or "").strip()
                 tag = re.sub(r"[^v0-9.]", "", raw_tag)
-
                 if tag and self._parse_ver_tuple(tag) > self._parse_ver_tuple(APP_VERSION):
                     def _ask():
                         msg = self.t("update_available").format(tag=tag)
                         if messagebox.askyesno(self.t("update_title"), msg, parent=self):
                             webbrowser.open(GITHUB_RELEASES_PAGE)
                     self.after(0, _ask)
-                else:
-                    if show_if_latest:
-                        def _info():
-                            messagebox.showinfo(self.t("update_title"), self.t("update_latest"), parent=self)
-                        self.after(0, _info)
-
+                elif show_if_latest:
+                    self.after(0, lambda: messagebox.showinfo(
+                        self.t("update_title"), self.t("update_latest"), parent=self))
             except Exception:
                 if show_if_latest:
-                    def _err():
-                        messagebox.showwarning(self.t("update_title"), self.t("update_failed"), parent=self)
-                    self.after(0, _err)
+                    self.after(0, lambda: messagebox.showwarning(
+                        self.t("update_title"), self.t("update_failed"), parent=self))
 
         threading.Thread(target=worker, daemon=True).start()
 
-    # ---------- Center ----------
-    def center_window(self):
-        self.update_idletasks()
-        w = self.winfo_width()
-        h = self.winfo_height()
-        sw = self.winfo_screenwidth()
-        sh = self.winfo_screenheight()
-        x = (sw // 2) - (w // 2)
-        y = (sh // 2) - (h // 2)
-        self.geometry(f"{w}x{h}+{x}+{y}")
+    # ======================================================================
+    # UI CONSTRUCTION
+    # ======================================================================
+    def create_ui(self):
+        # Main scrollable container
+        self.grid_rowconfigure(0, weight=0)
+        self.grid_rowconfigure(1, weight=0)
+        self.grid_rowconfigure(2, weight=0)
+        self.grid_rowconfigure(3, weight=0)
+        self.grid_rowconfigure(4, weight=1)
+        self.grid_columnconfigure(0, weight=1)
 
-    def center_child(self, tlv):
-        tlv.update_idletasks()
-        x = self.winfo_x() + (self.winfo_width() - tlv.winfo_width()) // 2
-        y = self.winfo_y() + (self.winfo_height() - tlv.winfo_height()) // 2
-        tlv.geometry(f"+{x}+{y}")
+        # --- Top bar: admin + theme + language ---
+        self._build_topbar()
 
-    # ---------- Menu ----------
-    def create_menu(self):
-        menubar = tk.Menu(self)
+        # --- System Info ---
+        self._build_sysinfo()
 
-        self.file_menu = tk.Menu(menubar, tearoff=0)
-        self.file_menu.add_checkbutton(
-            label=("Always run as admin" if self.lang == "en" else "تشغيل دائم كمسؤول"),
-            variable=self.var_always_admin,
-            command=self.on_toggle_always_admin,
+        # --- Options (Repair + Cleanup) ---
+        self._build_options()
+
+        # --- Progress ---
+        self._build_progress()
+
+        # --- Log ---
+        self._build_log()
+
+    def _build_topbar(self):
+        bar = ctk.CTkFrame(self, fg_color="transparent")
+        bar.grid(row=0, column=0, sticky="ew", padx=16, pady=(12, 4))
+
+        self.lbl_admin = ctk.CTkLabel(bar, text="", font=ctk.CTkFont(size=13, weight="bold"))
+        self.lbl_admin.pack(side="left")
+
+        # Right side buttons
+        self.btn_about = ctk.CTkButton(
+            bar, text="About", width=70, height=30,
+            fg_color="transparent", border_width=1,
+            command=self.show_about,
         )
-        self.file_menu.add_separator()
+        self.btn_about.pack(side="right", padx=(6, 0))
 
-        self.lang_menu = tk.Menu(self.file_menu, tearoff=0)
-        self.lang_var = tk.StringVar(value=self.lang)
-        self.lang_menu.add_radiobutton(label="English", value="en", variable=self.lang_var, command=self.on_change_language)
-        self.lang_menu.add_radiobutton(label="العربية", value="ar", variable=self.lang_var, command=self.on_change_language)
-        self.file_menu.add_cascade(label=self.t("theme"), menu=self.lang_menu)
-
-        # Theme submenu
-        self.theme_menu = tk.Menu(self.file_menu, tearoff=0)
-        self.theme_var = tk.StringVar(value=self.current_theme)
-        self.theme_menu.add_radiobutton(
-            label=self.t("theme_light"), value="light",
-            variable=self.theme_var, command=self.on_change_theme,
+        self.btn_theme = ctk.CTkButton(
+            bar, text="Theme", width=70, height=30,
+            fg_color="transparent", border_width=1,
+            command=self.toggle_theme,
         )
-        self.theme_menu.add_radiobutton(
-            label=self.t("theme_dark"), value="dark",
-            variable=self.theme_var, command=self.on_change_theme,
+        self.btn_theme.pack(side="right", padx=(6, 0))
+
+        self.btn_lang = ctk.CTkButton(
+            bar, text="AR / EN", width=70, height=30,
+            fg_color="transparent", border_width=1,
+            command=self._toggle_language,
         )
+        self.btn_lang.pack(side="right", padx=(6, 0))
 
-        # Fix: language cascade label should be Language, not Theme
-        self.file_menu.delete(2)  # remove the wrongly-labeled cascade
-        self.file_menu.add_cascade(label=("Language" if self.lang == "en" else "اللغة"), menu=self.lang_menu)
-        self.file_menu.add_cascade(label=self.t("theme"), menu=self.theme_menu)
+        self.btn_update = ctk.CTkButton(
+            bar, text="Updates", width=80, height=30,
+            fg_color="transparent", border_width=1,
+            command=lambda: self.check_latest_app_version_async(show_if_latest=True),
+        )
+        self.btn_update.pack(side="right", padx=(6, 0))
 
-        self.file_menu.add_separator()
-        self.file_menu.add_command(label=("Check for Updates" if self.lang == "en" else "التحقق من التحديثات"), command=self.manual_check_for_update)
-        self.file_menu.add_command(label=("About" if self.lang == "en" else "حول"), command=self.show_about)
-        self.file_menu.add_separator()
-        self.file_menu.add_command(label=("Exit" if self.lang == "en" else "خروج"), command=self.destroy)
+        self.btn_admin = ctk.CTkButton(
+            bar, text="", width=120, height=30,
+            fg_color=ACCENT_BLUE,
+            command=self._on_run_as_admin,
+        )
+        self.btn_admin.pack(side="right", padx=(6, 0))
 
-        menubar.add_cascade(label=("File" if self.lang == "en" else "ملف"), menu=self.file_menu)
-        self.config(menu=menubar)
+    def _build_sysinfo(self):
+        self.sysinfo_frame = ctk.CTkFrame(self, corner_radius=8)
+        self.sysinfo_frame.grid(row=1, column=0, sticky="ew", padx=16, pady=(4, 4))
 
-    def on_toggle_always_admin(self):
-        self.settings["always_admin"] = bool(self.var_always_admin.get())
-        save_settings(self.settings)
-        if self.var_always_admin.get() and not is_admin():
-            relaunch_as_admin()
+        self.sysinfo_labels = {}
+        keys = ["os_version", "cpu", "ram", "disk_space", "uptime"]
+        for i, key in enumerate(keys):
+            col = (i % 3) * 2
+            row = i // 3
+            lbl_k = ctk.CTkLabel(
+                self.sysinfo_frame, text="", font=ctk.CTkFont(size=12, weight="bold"),
+            )
+            lbl_k.grid(row=row, column=col, sticky="w", padx=(16, 4), pady=6)
+            lbl_v = ctk.CTkLabel(self.sysinfo_frame, text="", font=ctk.CTkFont(size=12))
+            lbl_v.grid(row=row, column=col + 1, sticky="w", padx=(0, 24), pady=6)
+            self.sysinfo_labels[key] = (lbl_k, lbl_v)
 
-    def on_change_language(self):
-        self.lang = self.lang_var.get()
+    def _build_options(self):
+        opts = ctk.CTkFrame(self, corner_radius=8)
+        opts.grid(row=2, column=0, sticky="ew", padx=16, pady=4)
+        opts.grid_columnconfigure(0, weight=1)
+        opts.grid_columnconfigure(1, weight=1)
+
+        # Select All
+        self.cb_select_all = ctk.CTkCheckBox(
+            opts, text="", variable=self.var_select_all,
+            font=ctk.CTkFont(size=13, weight="bold"),
+        )
+        self.cb_select_all.grid(row=0, column=0, columnspan=2, sticky="w", padx=16, pady=(12, 8))
+
+        # --- Left: Repair ---
+        left = ctk.CTkFrame(opts, fg_color="transparent")
+        left.grid(row=1, column=0, sticky="nsew", padx=(16, 8), pady=(0, 12))
+
+        self.lbl_repair = ctk.CTkLabel(left, text="", font=ctk.CTkFont(size=14, weight="bold"))
+        self.lbl_repair.pack(anchor="w", pady=(0, 6))
+
+        self.cb_restore_point = ctk.CTkCheckBox(left, text="", variable=self.var_restore_point)
+        self.cb_restore_point.pack(anchor="w", pady=3)
+        self.desc_restore_point = ctk.CTkLabel(left, text="", font=ctk.CTkFont(size=11), text_color="gray", wraplength=560)
+        self.desc_restore_point.pack(anchor="w", padx=(28, 0))
+
+        self.cb_dism_scan = ctk.CTkCheckBox(left, text="", variable=self.var_dism_scan)
+        self.cb_dism_scan.pack(anchor="w", pady=(8, 3))
+        self.desc_dism_scan = ctk.CTkLabel(left, text="", font=ctk.CTkFont(size=11), text_color="gray", wraplength=560)
+        self.desc_dism_scan.pack(anchor="w", padx=(28, 0))
+
+        self.cb_dism_restore = ctk.CTkCheckBox(left, text="", variable=self.var_dism_restore)
+        self.cb_dism_restore.pack(anchor="w", pady=(8, 3))
+        self.desc_dism_restore = ctk.CTkLabel(left, text="", font=ctk.CTkFont(size=11), text_color="gray", wraplength=560)
+        self.desc_dism_restore.pack(anchor="w", padx=(28, 0))
+
+        self.cb_sfc = ctk.CTkCheckBox(left, text="", variable=self.var_sfc)
+        self.cb_sfc.pack(anchor="w", pady=(8, 3))
+        self.desc_sfc = ctk.CTkLabel(left, text="", font=ctk.CTkFont(size=11), text_color="gray", wraplength=560)
+        self.desc_sfc.pack(anchor="w", padx=(28, 0))
+
+        self.cb_chkdsk = ctk.CTkCheckBox(left, text="", variable=self.var_chkdsk)
+        self.cb_chkdsk.pack(anchor="w", pady=(8, 3))
+        self.desc_chkdsk = ctk.CTkLabel(left, text="", font=ctk.CTkFont(size=11), text_color="gray", wraplength=560)
+        self.desc_chkdsk.pack(anchor="w", padx=(28, 0))
+
+        # CHKDSK sub-controls
+        chk_sub = ctk.CTkFrame(left, fg_color="transparent")
+        chk_sub.pack(anchor="w", padx=(28, 0), pady=(4, 0))
+
+        self.lbl_drive = ctk.CTkLabel(chk_sub, text="")
+        self.lbl_drive.pack(side="left")
+        self.drive_combo = ctk.CTkComboBox(chk_sub, width=90, variable=self.var_drive, state="readonly")
+        self.drive_combo.pack(side="left", padx=(6, 10))
+        self.btn_drive_refresh = ctk.CTkButton(chk_sub, text="", width=70, height=28, command=self.refresh_drive_list)
+        self.btn_drive_refresh.pack(side="left")
+
+        mode_sub = ctk.CTkFrame(left, fg_color="transparent")
+        mode_sub.pack(anchor="w", padx=(28, 0), pady=(4, 0))
+        self.lbl_mode = ctk.CTkLabel(mode_sub, text="")
+        self.lbl_mode.pack(side="left")
+        self.rb_scan = ctk.CTkRadioButton(mode_sub, text="", value="scan", variable=self.var_chkdsk_mode)
+        self.rb_scan.pack(side="left", padx=8)
+        self.rb_fix = ctk.CTkRadioButton(mode_sub, text="", value="fix", variable=self.var_chkdsk_mode)
+        self.rb_fix.pack(side="left", padx=8)
+
+        self.cb_reset_net = ctk.CTkCheckBox(left, text="", variable=self.var_reset_network)
+        self.cb_reset_net.pack(anchor="w", pady=(8, 3))
+        self.desc_reset_net = ctk.CTkLabel(left, text="", font=ctk.CTkFont(size=11), text_color="gray", wraplength=560)
+        self.desc_reset_net.pack(anchor="w", padx=(28, 0))
+
+        # --- Right: Cleanup ---
+        right = ctk.CTkFrame(opts, fg_color="transparent")
+        right.grid(row=1, column=1, sticky="nsew", padx=(8, 16), pady=(0, 12))
+
+        self.lbl_cleanup = ctk.CTkLabel(right, text="", font=ctk.CTkFont(size=14, weight="bold"))
+        self.lbl_cleanup.pack(anchor="w", pady=(0, 6))
+
+        cleanup_items = [
+            ("cb_temp", "desc_temp", self.var_temp),
+            ("cb_prefetch", "desc_prefetch", self.var_prefetch),
+            ("cb_recycle", "desc_recycle", self.var_recycle_bin),
+            ("cb_dns", "desc_dns", self.var_flush_dns),
+            ("cb_comp", "desc_comp", self.var_dism_component_cleanup),
+            ("cb_wu", "desc_wu", self.var_wu_cache),
+        ]
+        for cb_attr, desc_attr, var in cleanup_items:
+            cb = ctk.CTkCheckBox(right, text="", variable=var)
+            cb.pack(anchor="w", pady=(8, 3) if cb_attr != "cb_temp" else 3)
+            setattr(self, cb_attr, cb)
+            desc = ctk.CTkLabel(right, text="", font=ctk.CTkFont(size=11), text_color="gray", wraplength=480)
+            desc.pack(anchor="w", padx=(28, 0))
+            setattr(self, desc_attr, desc)
+
+    def _build_progress(self):
+        prog_frame = ctk.CTkFrame(self, corner_radius=8)
+        prog_frame.grid(row=3, column=0, sticky="ew", padx=16, pady=4)
+
+        top_row = ctk.CTkFrame(prog_frame, fg_color="transparent")
+        top_row.pack(fill="x", padx=16, pady=(12, 4))
+
+        self.lbl_step = ctk.CTkLabel(top_row, textvariable=self.var_step_text, font=ctk.CTkFont(size=12))
+        self.lbl_step.pack(side="left")
+
+        self.progress = ctk.CTkProgressBar(prog_frame, height=14)
+        self.progress.pack(fill="x", padx=16, pady=(0, 4))
+        self.progress.set(0)
+
+        # Buttons row
+        btn_row = ctk.CTkFrame(prog_frame, fg_color="transparent")
+        btn_row.pack(fill="x", padx=16, pady=(4, 12))
+
+        self.btn_start = ctk.CTkButton(
+            btn_row, text="", width=120, height=36,
+            fg_color=ACCENT_GREEN, hover_color="#0e7a35",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            command=self.on_start,
+        )
+        self.btn_start.pack(side="left")
+
+        self.btn_skip = ctk.CTkButton(
+            btn_row, text="", width=100, height=36,
+            fg_color="transparent", border_width=1,
+            command=self.on_skip, state="disabled",
+        )
+        self.btn_skip.pack(side="left", padx=(8, 0))
+
+        self.btn_cancel = ctk.CTkButton(
+            btn_row, text="", width=100, height=36,
+            fg_color=ACCENT_RED, hover_color="#a82418",
+            command=self.on_cancel, state="disabled",
+        )
+        self.btn_cancel.pack(side="left", padx=(8, 0))
+
+        self.btn_save_log = ctk.CTkButton(
+            btn_row, text="", width=100, height=36,
+            fg_color="transparent", border_width=1,
+            command=self.on_save_log,
+        )
+        self.btn_save_log.pack(side="right")
+
+        self.btn_clear = ctk.CTkButton(
+            btn_row, text="", width=100, height=36,
+            fg_color="transparent", border_width=1,
+            command=self.on_clear,
+        )
+        self.btn_clear.pack(side="right", padx=(0, 8))
+
+    def _build_log(self):
+        log_frame = ctk.CTkFrame(self, corner_radius=8)
+        log_frame.grid(row=4, column=0, sticky="nsew", padx=16, pady=(4, 12))
+
+        self.lbl_log_title = ctk.CTkLabel(log_frame, text="", font=ctk.CTkFont(size=13, weight="bold"))
+        self.lbl_log_title.pack(anchor="w", padx=16, pady=(10, 4))
+
+        self.txt = ctk.CTkTextbox(log_frame, font=ctk.CTkFont(family="Consolas", size=12), corner_radius=6)
+        self.txt.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+
+    # ======================================================================
+    # LANGUAGE
+    # ======================================================================
+    def _toggle_language(self):
+        self.lang = "ar" if self.lang == "en" else "en"
         self.settings["language"] = self.lang
         save_settings(self.settings)
-        self.create_menu()
         self.apply_language()
 
-    def on_change_theme(self):
-        self.current_theme = self.theme_var.get()
-        self.settings["theme"] = self.current_theme
-        save_settings(self.settings)
-        self.apply_theme()
-
-    # ---------- Language ----------
     def apply_language(self):
-        self.lbl_admin.config(text=(self.t("admin_yes") if is_admin() else self.t("admin_no")))
-        self.btn_admin.config(text=self.t("run_admin"))
-        self.opts_group.config(text=self.t("choose_fix"))
-        self.cb_select_all.config(text=self.t("select_all"))
-        self.lbl_repair.config(text=self.t("repair"))
-        self.lbl_cleanup.config(text=self.t("cleanup"))
-        self.cb_restore_point.config(text=self.t("opt_restore_point"))
-        self.desc_restore_point.config(text=self.t("desc_restore_point"))
-        self.cb_dism_scan.config(text=self.t("opt_dism_scan"))
-        self.desc_dism_scan.config(text=self.t("desc_dism_scan"))
-        self.cb_dism_restore.config(text=self.t("opt_dism_restore"))
-        self.desc_dism_restore.config(text=self.t("desc_dism_restore"))
-        self.cb_sfc.config(text=self.t("opt_sfc"))
-        self.desc_sfc.config(text=self.t("desc_sfc"))
-        self.cb_chkdsk.config(text=self.t("opt_chkdsk"))
-        self.desc_chkdsk.config(text=self.t("desc_chkdsk"))
-        self.cb_reset_net.config(text=self.t("opt_reset_net"))
-        self.desc_reset_net.config(text=self.t("desc_reset_net"))
-        self.lbl_drive.config(text=self.t("drive"))
-        self.btn_drive_refresh.config(text=self.t("refresh"))
-        self.lbl_mode.config(text=self.t("mode"))
-        self.rb_scan.config(text=self.t("scan_only"))
-        self.rb_fix.config(text=self.t("fix_f"))
-        self.cb_temp.config(text=self.t("opt_temp"))
-        self.desc_temp.config(text=self.t("desc_temp"))
-        self.cb_prefetch.config(text=self.t("opt_prefetch"))
-        self.desc_prefetch.config(text=self.t("desc_prefetch"))
-        self.cb_recycle.config(text=self.t("opt_recycle"))
-        self.desc_recycle.config(text=self.t("desc_recycle"))
-        self.cb_dns.config(text=self.t("opt_dns"))
-        self.desc_dns.config(text=self.t("desc_dns"))
-        self.cb_comp.config(text=self.t("opt_comp"))
-        self.desc_comp.config(text=self.t("desc_comp"))
-        self.cb_wu.config(text=self.t("opt_wu"))
-        self.desc_wu.config(text=self.t("desc_wu"))
-        self.prog_group.config(text=self.t("progress"))
-        self.log_group.config(text=self.t("log"))
-        self.btn_start.config(text=self.t("start"))
-        self.btn_skip.config(text=self.t("skip"))
-        self.btn_cancel.config(text=self.t("cancel"))
-        self.btn_clear.config(text=self.t("clear_log"))
-        self.btn_save_log.config(text=self.t("save_log"))
-        self.sysinfo_group.config(text=self.t("sys_info"))
-        self.refresh_admin_ui()
+        self.lbl_admin.configure(text=(self.t("admin_yes") if is_admin() else self.t("admin_no")))
+        self.btn_admin.configure(text=self.t("run_admin"))
+        self.btn_admin.configure(state="disabled" if is_admin() else "normal")
+
+        self.cb_select_all.configure(text=self.t("select_all"))
+        self.lbl_repair.configure(text=self.t("repair"))
+        self.lbl_cleanup.configure(text=self.t("cleanup"))
+
+        self.cb_restore_point.configure(text=self.t("opt_restore_point"))
+        self.desc_restore_point.configure(text=self.t("desc_restore_point"))
+        self.cb_dism_scan.configure(text=self.t("opt_dism_scan"))
+        self.desc_dism_scan.configure(text=self.t("desc_dism_scan"))
+        self.cb_dism_restore.configure(text=self.t("opt_dism_restore"))
+        self.desc_dism_restore.configure(text=self.t("desc_dism_restore"))
+        self.cb_sfc.configure(text=self.t("opt_sfc"))
+        self.desc_sfc.configure(text=self.t("desc_sfc"))
+        self.cb_chkdsk.configure(text=self.t("opt_chkdsk"))
+        self.desc_chkdsk.configure(text=self.t("desc_chkdsk"))
+        self.cb_reset_net.configure(text=self.t("opt_reset_net"))
+        self.desc_reset_net.configure(text=self.t("desc_reset_net"))
+
+        self.lbl_drive.configure(text=self.t("drive"))
+        self.btn_drive_refresh.configure(text=self.t("refresh"))
+        self.lbl_mode.configure(text=self.t("mode"))
+        self.rb_scan.configure(text=self.t("scan_only"))
+        self.rb_fix.configure(text=self.t("fix_f"))
+
+        self.cb_temp.configure(text=self.t("opt_temp"))
+        self.desc_temp.configure(text=self.t("desc_temp"))
+        self.cb_prefetch.configure(text=self.t("opt_prefetch"))
+        self.desc_prefetch.configure(text=self.t("desc_prefetch"))
+        self.cb_recycle.configure(text=self.t("opt_recycle"))
+        self.desc_recycle.configure(text=self.t("desc_recycle"))
+        self.cb_dns.configure(text=self.t("opt_dns"))
+        self.desc_dns.configure(text=self.t("desc_dns"))
+        self.cb_comp.configure(text=self.t("opt_comp"))
+        self.desc_comp.configure(text=self.t("desc_comp"))
+        self.cb_wu.configure(text=self.t("opt_wu"))
+        self.desc_wu.configure(text=self.t("desc_wu"))
+
+        self.btn_start.configure(text=self.t("start"))
+        self.btn_skip.configure(text=self.t("skip"))
+        self.btn_cancel.configure(text=self.t("cancel"))
+        self.btn_clear.configure(text=self.t("clear_log"))
+        self.btn_save_log.configure(text=self.t("save_log"))
+        self.lbl_log_title.configure(text=self.t("log"))
+
         self.refresh_sysinfo()
 
-    # ---------- Select All ----------
+    # ======================================================================
+    # SELECT ALL
+    # ======================================================================
     def on_select_all_toggled(self):
         if self._select_all_guard:
             return
@@ -394,140 +489,9 @@ class App(tk.Tk):
         finally:
             self._select_all_guard = False
 
-    # ---------- UI ----------
-    def create_ui(self):
-        # Top bar: admin status
-        top = ttk.Frame(self, padding=12)
-        top.pack(fill="x")
-
-        self.lbl_admin = ttk.Label(top, text="")
-        self.lbl_admin.pack(side="left")
-
-        self.btn_admin = ttk.Button(top, text="", command=self.on_run_as_admin)
-        self.btn_admin.pack(side="right")
-
-        # System Info panel
-        self.sysinfo_group = ttk.LabelFrame(self, text="", padding=8)
-        self.sysinfo_group.pack(fill="x", padx=12, pady=(0, 8))
-
-        self.sysinfo_frame = ttk.Frame(self.sysinfo_group, style="SysInfo.TFrame")
-        self.sysinfo_frame.pack(fill="x", padx=4, pady=4)
-
-        self.sysinfo_labels = {}
-        for i, key in enumerate(["os_version", "cpu", "ram", "disk_space", "uptime"]):
-            lbl_key = ttk.Label(self.sysinfo_frame, text="", style="SysInfo.TLabel", font=("Segoe UI", 9, "bold"))
-            lbl_key.grid(row=i // 3, column=(i % 3) * 2, sticky="w", padx=(8, 4), pady=2)
-            lbl_val = ttk.Label(self.sysinfo_frame, text="", style="SysInfo.TLabel", font=("Segoe UI", 9))
-            lbl_val.grid(row=i // 3, column=(i % 3) * 2 + 1, sticky="w", padx=(0, 20), pady=2)
-            self.sysinfo_labels[key] = (lbl_key, lbl_val)
-
-        # Options group
-        self.opts_group = ttk.LabelFrame(self, text="", padding=12)
-        self.opts_group.pack(fill="x", padx=12, pady=8)
-
-        sa_row = ttk.Frame(self.opts_group)
-        sa_row.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 10))
-        self.cb_select_all = ttk.Checkbutton(sa_row, text="", variable=self.var_select_all)
-        self.cb_select_all.pack(anchor="w")
-
-        left = ttk.Frame(self.opts_group)
-        left.grid(row=1, column=0, sticky="nsew", padx=(0, 18))
-
-        right = ttk.Frame(self.opts_group)
-        right.grid(row=1, column=1, sticky="nsew")
-
-        # Left column: Repair
-        self.lbl_repair = ttk.Label(left, text="", font=("Segoe UI", 10, "bold"))
-        self.lbl_repair.pack(anchor="w")
-
-        self.cb_restore_point, self.desc_restore_point = add_option_with_desc(left, "", "", self.var_restore_point, wrap=640)
-        self.cb_dism_scan, self.desc_dism_scan = add_option_with_desc(left, "", "", self.var_dism_scan, wrap=640)
-        self.cb_dism_restore, self.desc_dism_restore = add_option_with_desc(left, "", "", self.var_dism_restore, wrap=640)
-        self.cb_sfc, self.desc_sfc = add_option_with_desc(left, "", "", self.var_sfc, wrap=640)
-
-        ch_row = ttk.Frame(left)
-        ch_row.pack(fill="x", anchor="w", pady=(6, 0))
-        self.cb_chkdsk = ttk.Checkbutton(ch_row, text="", variable=self.var_chkdsk)
-        self.cb_chkdsk.pack(anchor="w")
-        self.desc_chkdsk = ttk.Label(ch_row, text="", foreground="#666666", wraplength=640)
-        self.desc_chkdsk.pack(anchor="w", padx=(26, 0))
-
-        sub = ttk.Frame(left)
-        sub.pack(anchor="w", pady=(6, 0), padx=(26, 0))
-        self.lbl_drive = ttk.Label(sub, text="")
-        self.lbl_drive.pack(side="left")
-
-        self.drive_combo = ttk.Combobox(sub, width=8, textvariable=self.var_drive, state="readonly")
-        self.drive_combo.pack(side="left", padx=(6, 10))
-
-        self.btn_drive_refresh = ttk.Button(sub, text="", command=self.refresh_drive_list)
-        self.btn_drive_refresh.pack(side="left")
-
-        mode = ttk.Frame(left)
-        mode.pack(anchor="w", pady=(6, 0), padx=(26, 0))
-        self.lbl_mode = ttk.Label(mode, text="")
-        self.lbl_mode.pack(side="left")
-
-        self.rb_scan = ttk.Radiobutton(mode, text="", value="scan", variable=self.var_chkdsk_mode)
-        self.rb_scan.pack(side="left", padx=8)
-
-        self.rb_fix = ttk.Radiobutton(mode, text="", value="fix", variable=self.var_chkdsk_mode)
-        self.rb_fix.pack(side="left", padx=8)
-
-        self.cb_reset_net, self.desc_reset_net = add_option_with_desc(left, "", "", self.var_reset_network, wrap=640)
-
-        # Right column: Cleanup
-        self.lbl_cleanup = ttk.Label(right, text="", font=("Segoe UI", 10, "bold"))
-        self.lbl_cleanup.pack(anchor="w")
-
-        self.cb_temp, self.desc_temp = add_option_with_desc(right, "", "", self.var_temp, wrap=520)
-        self.cb_prefetch, self.desc_prefetch = add_option_with_desc(right, "", "", self.var_prefetch, wrap=520)
-        self.cb_recycle, self.desc_recycle = add_option_with_desc(right, "", "", self.var_recycle_bin, wrap=520)
-        self.cb_dns, self.desc_dns = add_option_with_desc(right, "", "", self.var_flush_dns, wrap=520)
-        self.cb_comp, self.desc_comp = add_option_with_desc(right, "", "", self.var_dism_component_cleanup, wrap=520)
-        self.cb_wu, self.desc_wu = add_option_with_desc(right, "", "", self.var_wu_cache, wrap=520)
-
-        self.opts_group.grid_columnconfigure(0, weight=1)
-        self.opts_group.grid_columnconfigure(1, weight=1)
-
-        # Progress
-        self.prog_group = ttk.LabelFrame(self, text="", padding=10)
-        self.prog_group.pack(fill="x", padx=12, pady=(0, 8))
-        ttk.Label(self.prog_group, textvariable=self.var_step_text).pack(anchor="w")
-        self.progress = ttk.Progressbar(self.prog_group, orient="horizontal", mode="determinate", maximum=100)
-        self.progress.pack(fill="x", pady=6)
-
-        # Buttons
-        btns = ttk.Frame(self, padding=(12, 0, 12, 0))
-        btns.pack(fill="x")
-
-        self.btn_start = ttk.Button(btns, text="", command=self.on_start)
-        self.btn_start.pack(side="left")
-
-        self.btn_skip = ttk.Button(btns, text="", command=self.on_skip, state="disabled")
-        self.btn_skip.pack(side="left", padx=8)
-
-        self.btn_cancel = ttk.Button(btns, text="", command=self.on_cancel, state="disabled")
-        self.btn_cancel.pack(side="left")
-
-        self.btn_save_log = ttk.Button(btns, text="", command=self.on_save_log)
-        self.btn_save_log.pack(side="right")
-
-        self.btn_clear = ttk.Button(btns, text="", command=self.on_clear)
-        self.btn_clear.pack(side="right", padx=(0, 8))
-
-        # Log area
-        self.log_group = ttk.LabelFrame(self, text="", padding=8)
-        self.log_group.pack(fill="both", expand=True, padx=12, pady=10)
-
-        self.txt = tk.Text(self.log_group, wrap="word")
-        self.txt.pack(side="left", fill="both", expand=True)
-
-        sb = ttk.Scrollbar(self.log_group, orient="vertical", command=self.txt.yview)
-        sb.pack(side="right", fill="y")
-        self.txt.config(yscrollcommand=sb.set)
-
-    # ---------- System Info ----------
+    # ======================================================================
+    # SYSTEM INFO
+    # ======================================================================
     def refresh_sysinfo(self):
         info = {
             "os_version": sysinfo.get_os_version(),
@@ -536,27 +500,30 @@ class App(tk.Tk):
             "disk_space": sysinfo.get_disk_info("C:"),
             "uptime": sysinfo.get_uptime(),
         }
-        for key, (lbl_key, lbl_val) in self.sysinfo_labels.items():
-            lbl_key.config(text=self.t(key))
-            lbl_val.config(text=info.get(key, ""))
+        for key, (lbl_k, lbl_v) in self.sysinfo_labels.items():
+            lbl_k.configure(text=self.t(key))
+            lbl_v.configure(text=info.get(key, ""))
 
-    def refresh_admin_ui(self):
-        self.btn_admin.config(state="disabled" if is_admin() else "normal")
-
+    # ======================================================================
+    # CONTROLS
+    # ======================================================================
     def update_chkdsk_controls(self):
         enabled = bool(self.var_chkdsk.get())
-        self.drive_combo.config(state=("readonly" if enabled else "disabled"))
-        self.btn_drive_refresh.config(state=("normal" if enabled else "disabled"))
-        self.rb_scan.config(state=("normal" if enabled else "disabled"))
-        self.rb_fix.config(state=("normal" if enabled else "disabled"))
+        state = "normal" if enabled else "disabled"
+        self.drive_combo.configure(state=state)
+        self.btn_drive_refresh.configure(state=state)
+        self.rb_scan.configure(state=state)
+        self.rb_fix.configure(state=state)
 
     def refresh_drive_list(self):
         drives = list_drives()
-        self.drive_combo["values"] = drives
+        self.drive_combo.configure(values=drives)
         if self.var_drive.get() not in drives:
             self.var_drive.set(drives[0])
 
-    # ---------- Log ----------
+    # ======================================================================
+    # LOG
+    # ======================================================================
     def enqueue_log(self, msg: str):
         self.log_queue.put(msg)
 
@@ -578,12 +545,9 @@ class App(tk.Tk):
         if not content:
             messagebox.showinfo(self.t("log"), self.t("log_empty"), parent=self)
             return
-
         default_name = f"WindowsFixer_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
         path = filedialog.asksaveasfilename(
-            parent=self,
-            defaultextension=".log",
-            initialfile=default_name,
+            parent=self, defaultextension=".log", initialfile=default_name,
             filetypes=[("Log files", "*.log"), ("Text files", "*.txt"), ("All files", "*.*")],
         )
         if path:
@@ -594,16 +558,18 @@ class App(tk.Tk):
             except OSError as e:
                 messagebox.showerror("Error", str(e), parent=self)
 
-    # ---------- Run/Cancel/Skip ----------
+    # ======================================================================
+    # RUN / CANCEL / SKIP
+    # ======================================================================
     def set_running(self, running: bool):
         self.running = running
-        self.btn_start.config(state="disabled" if running else "normal")
-        self.btn_skip.config(state="normal" if running else "disabled")
-        self.btn_cancel.config(state="normal" if running else "disabled")
+        self.btn_start.configure(state="disabled" if running else "normal")
+        self.btn_skip.configure(state="normal" if running else "disabled")
+        self.btn_cancel.configure(state="normal" if running else "disabled")
         if not running:
-            self.refresh_admin_ui()
+            self.btn_admin.configure(state="disabled" if is_admin() else "normal")
 
-    def on_run_as_admin(self):
+    def _on_run_as_admin(self):
         if not is_admin():
             relaunch_as_admin()
 
@@ -622,13 +588,13 @@ class App(tk.Tk):
         self.runner.reset_flags_for_step()
         return self.runner.run_cmd(cmd)
 
-    # ---------- Steps ----------
+    # ======================================================================
+    # STEPS
+    # ======================================================================
     def build_steps(self):
         steps = []
-
         if self.var_restore_point.get():
             steps.append(("Create Restore Point", self.step_restore_point))
-
         if self.var_temp.get() or self.var_prefetch.get():
             steps.append(("Cleanup (Temp/Prefetch)", self.step_temp_prefetch))
         if self.var_recycle_bin.get():
@@ -639,7 +605,6 @@ class App(tk.Tk):
             steps.append(("DISM Component Cleanup", self.step_dism_component_cleanup))
         if self.var_wu_cache.get():
             steps.append(("Clear Windows Update Cache", self.step_wu_cache))
-
         if self.var_dism_scan.get():
             steps.append(("DISM ScanHealth", self.step_dism_scanhealth))
         if self.var_dism_restore.get():
@@ -652,49 +617,36 @@ class App(tk.Tk):
             steps.append((f"CHKDSK ({drive}, {mode})", self.step_chkdsk))
         if self.var_reset_network.get():
             steps.append(("Reset Network Stack", self.step_reset_network))
-
         return steps
 
     def on_start(self):
         if self.running:
             return
-
         self.runner.reset_all()
-
         steps = self.build_steps()
         if not steps:
-            messagebox.showwarning(
-                self.t("nothing_selected"),
-                self.t("select_task"),
-                parent=self,
-            )
+            messagebox.showwarning(self.t("nothing_selected"), self.t("select_task"), parent=self)
             return
-
         self.total_steps = len(steps)
-        self.progress["value"] = 0
+        self.progress.set(0)
         self.var_step_text.set("Starting...")
-
         self.set_running(True)
         self.enqueue_log(f"--- Windows Fixer {APP_VERSION} ---")
         self.enqueue_log("Starting...")
-
         self.worker_thread = threading.Thread(target=self.worker, args=(steps,), daemon=True)
         self.worker_thread.start()
 
     def set_progress(self, step_index: int, step_name: str):
-        pct = 0 if self.total_steps <= 0 else int((step_index / self.total_steps) * 100)
-
+        pct = 0 if self.total_steps <= 0 else step_index / self.total_steps
         def _ui():
             self.var_step_text.set(f"Step {step_index}/{self.total_steps}: {step_name}")
-            self.progress["value"] = pct
-
+            self.progress.set(pct)
         self.after(0, _ui)
 
     def finish_progress(self, msg="Done"):
         def _ui():
             self.var_step_text.set(msg)
-            self.progress["value"] = 100
-
+            self.progress.set(1.0)
         self.after(0, _ui)
 
     # ----- Step implementations -----
@@ -733,18 +685,15 @@ class App(tk.Tk):
         if not is_admin():
             self.enqueue_log("[WARN] Windows Update cache cleanup needs Admin. Skipping.")
             return "ok"
-
         r = self.run_command_step(["net", "stop", "wuauserv"])
         if r in ("cancel", "skip"):
             return r
         r = self.run_command_step(["net", "stop", "bits"])
         if r in ("cancel", "skip"):
             return r
-
         windir = os.environ.get("WINDIR", r"C:\Windows")
         dl = os.path.join(windir, "SoftwareDistribution", "Download")
         self.enqueue_log(f"[INFO] Cleaning: {dl}")
-
         try:
             if os.path.exists(dl):
                 for name in os.listdir(dl):
@@ -756,7 +705,6 @@ class App(tk.Tk):
                 self.enqueue_log("[INFO] Cache folder not found; skip.")
         except Exception as e:
             self.enqueue_log(f"[WARN] Could not clean Windows Update cache: {e}")
-
         r = self.run_command_step(["net", "start", "bits"])
         if r in ("cancel", "skip"):
             return r
@@ -795,90 +743,171 @@ class App(tk.Tk):
                     self.enqueue_log("[INFO] Cancelled. Stopping all steps.")
                     self.finish_progress("Cancelled")
                     return
-
                 self.set_progress(idx, name)
                 result = fn()
-
                 if result == "cancel":
                     self.enqueue_log("[INFO] Cancelled. Stopping all steps.")
                     self.finish_progress("Cancelled")
                     return
-
                 if result == "skip":
                     self.enqueue_log(f"[INFO] Step skipped: {name}")
                     continue
-
             self.finish_progress("Done")
             self.enqueue_log("All selected tasks finished.")
-
             self.after(200, lambda: play_success_sound(self.enqueue_log))
-
         except Exception as e:
             self.enqueue_log(f"[ERROR] {e}")
         finally:
             self.after(0, lambda: self.set_running(False))
 
-    # ---------- About ----------
+    # ======================================================================
+    # ABOUT DIALOG
+    # ======================================================================
     def show_about(self):
-        win = tk.Toplevel(self)
+        win = ctk.CTkToplevel(self)
         win.title("About" if self.lang == "en" else "حول")
         win.resizable(False, False)
+        win.geometry("540x620")
         apply_icon_to_tlv(win, self.icon_path)
 
-        frame = ttk.Frame(win, padding=16)
-        frame.pack(fill="both", expand=True)
+        # Header
+        ctk.CTkLabel(
+            win, text="WINDOWS FIXER",
+            font=ctk.CTkFont(size=24, weight="bold"),
+        ).pack(pady=(28, 4))
 
-        title = "Windows Fixer"
-        sub = (
-            "is a freeware Windows repair & cleanup tool.\nRuns SFC, DISM, CHKDSK and safe cleanup tasks."
+        ctk.CTkLabel(
+            win, text=f"{APP_VERSION}  /  Build {BUILD_DATE}",
+            font=ctk.CTkFont(size=12), text_color="gray",
+        ).pack(pady=(0, 8))
+
+        tagline = (
+            "A freeware Windows repair & cleanup tool.\n"
+            "SFC, DISM, CHKDSK and safe cleanup - all in one place."
             if self.lang == "en"
-            else "أداة مجانية لإصلاح وتنظيف ويندوز.\nتشغل SFC و DISM و CHKDSK مع عمليات تنظيف آمنة."
+            else "أداة مجانية لإصلاح وتنظيف ويندوز.\n"
+            "SFC و DISM و CHKDSK مع عمليات تنظيف آمنة."
         )
+        ctk.CTkLabel(
+            win, text=tagline,
+            font=ctk.CTkFont(size=13), text_color="gray",
+            wraplength=440, justify="center",
+        ).pack(pady=(0, 16))
 
-        tk.Label(frame, text=title, font=("Segoe UI", 14, "bold")).pack(pady=(0, 4))
-        tk.Label(frame, text=sub, wraplength=520, justify="center").pack(pady=(0, 8))
-        tk.Label(frame, text=f"Version {APP_VERSION} - {BUILD_DATE}").pack(pady=(0, 10))
+        # Credits cards in a row
+        cards = ctk.CTkFrame(win, fg_color="transparent")
+        cards.pack(fill="x", padx=24, pady=(0, 12))
+        cards.grid_columnconfigure(0, weight=1)
+        cards.grid_columnconfigure(1, weight=1)
 
-        row = ttk.Frame(frame)
-        row.pack()
-        tk.Label(row, text="Author: ilukezippo (BoYaqoub)").pack(side="left")
+        # Original author card
+        orig = ctk.CTkFrame(cards, corner_radius=8, border_width=1, border_color=ACCENT_BLUE)
+        orig.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+
+        ctk.CTkLabel(
+            orig, text="ORIGINAL AUTHOR" if self.lang == "en" else "المطور الأصلي",
+            font=ctk.CTkFont(size=10, weight="bold"), text_color=ACCENT_BLUE,
+        ).pack(anchor="w", padx=14, pady=(12, 2))
+
+        orig_name = ctk.CTkFrame(orig, fg_color="transparent")
+        orig_name.pack(anchor="w", padx=14, pady=(0, 4))
+        ctk.CTkLabel(
+            orig_name, text="ilukezippo (BoYaqoub)",
+            font=ctk.CTkFont(size=13, weight="bold"),
+        ).pack(side="left")
 
         flag = load_flag_image()
         if flag:
-            tk.Label(row, image=flag).pack(side="left", padx=(6, 0))
+            fl = tk.Label(orig_name, image=flag, bd=0, highlightthickness=0)
+            fl.pack(side="left", padx=(8, 0))
             win._flag = flag
 
-        link_row = ttk.Frame(frame)
-        link_row.pack(pady=(8, 0))
-        tk.Label(link_row, text=("Info and Latest Updates at " if self.lang == "en" else "المعلومات وآخر التحديثات: ")).pack(
-            side="left"
+        orig_link = ctk.CTkButton(
+            orig, text="View original project", width=160, height=26,
+            font=ctk.CTkFont(size=11),
+            fg_color="transparent", border_width=1,
+            command=lambda: webbrowser.open(GITHUB_PAGE_ORIGINAL),
         )
-        link = tk.Label(
-            link_row,
-            text=GITHUB_PAGE,
-            fg=THEMES[self.current_theme]["link_fg"],
-            cursor="hand2",
-            font=("Segoe UI", 9, "underline"),
-        )
-        link.pack(side="left")
-        link.bind("<Button-1>", lambda e: webbrowser.open(GITHUB_PAGE))
+        orig_link.pack(anchor="w", padx=14, pady=(0, 12))
 
-        donate_img = make_donate_image(160, 44)
-        win._don = donate_img
-        tk.Button(
-            frame,
-            image=donate_img,
-            text=("Donate" if self.lang == "en" else "تبرع"),
-            compound="center",
-            font=("Segoe UI", 11, "bold"),
-            fg="#0f3462",
-            activeforeground="#0f3462",
-            bd=0,
-            highlightthickness=0,
-            cursor="hand2",
-            relief="flat",
+        # Fork maintainer card
+        fork = ctk.CTkFrame(cards, corner_radius=8, border_width=1, border_color=ACCENT_GREEN)
+        fork.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
+
+        ctk.CTkLabel(
+            fork, text="FORK MAINTAINER" if self.lang == "en" else "مشرف الفورك",
+            font=ctk.CTkFont(size=10, weight="bold"), text_color=ACCENT_GREEN,
+        ).pack(anchor="w", padx=14, pady=(12, 2))
+
+        ctk.CTkLabel(
+            fork, text="Khalid El Merrah",
+            font=ctk.CTkFont(size=13, weight="bold"),
+        ).pack(anchor="w", padx=14, pady=(0, 4))
+
+        fork_link = ctk.CTkButton(
+            fork, text="View fork", width=100, height=26,
+            font=ctk.CTkFont(size=11),
+            fg_color="transparent", border_width=1,
+            command=lambda: webbrowser.open(GITHUB_PAGE_FORK),
+        )
+        fork_link.pack(anchor="w", padx=14, pady=(0, 12))
+
+        # Feature chips
+        ctk.CTkLabel(
+            win,
+            text="WHAT'S NEW IN THIS FORK" if self.lang == "en" else "ما الجديد في هذا الفورك",
+            font=ctk.CTkFont(size=10, weight="bold"), text_color=ACCENT_BLUE,
+        ).pack(anchor="w", padx=30, pady=(4, 8))
+
+        chips_data = [
+            ("9 Security Fixes", ACCENT_RED),
+            ("Restore Points", ACCENT_BLUE),
+            ("System Info", ACCENT_GREEN),
+            ("Dark Theme", "#5c2d91"),
+            ("Log Export", ACCENT_GOLD),
+            ("Modular Code", "#567c73"),
+        ] if self.lang == "en" else [
+            ("9 إصلاحات أمنية", ACCENT_RED),
+            ("نقاط استعادة", ACCENT_BLUE),
+            ("معلومات النظام", ACCENT_GREEN),
+            ("مظهر داكن", "#5c2d91"),
+            ("حفظ السجل", ACCENT_GOLD),
+            ("كود معياري", "#567c73"),
+        ]
+
+        row1 = ctk.CTkFrame(win, fg_color="transparent")
+        row1.pack(anchor="w", padx=30, pady=2)
+        row2 = ctk.CTkFrame(win, fg_color="transparent")
+        row2.pack(anchor="w", padx=30, pady=2)
+
+        for i, (text, color) in enumerate(chips_data):
+            parent = row1 if i < 3 else row2
+            ctk.CTkButton(
+                parent, text=text, height=26, width=len(text) * 9 + 20,
+                font=ctk.CTkFont(size=11), text_color=color,
+                fg_color="transparent", border_width=1, border_color=color,
+                hover=False, corner_radius=12,
+            ).pack(side="left", padx=(0, 6))
+
+        # Bottom buttons
+        bottom = ctk.CTkFrame(win, fg_color="transparent")
+        bottom.pack(pady=(20, 24))
+
+        ctk.CTkButton(
+            bottom,
+            text="Donate to Original Author" if self.lang == "en" else "تبرع للمطور الأصلي",
+            width=200, height=36,
+            fg_color=ACCENT_GOLD, hover_color="#b37a08",
+            font=ctk.CTkFont(size=13, weight="bold"),
             command=lambda: webbrowser.open(DONATE_PAGE),
-        ).pack(pady=(12, 0))
+        ).pack(side="left", padx=(0, 10))
 
-        ttk.Button(frame, text=("Close" if self.lang == "en" else "إغلاق"), command=win.destroy).pack(pady=(10, 0))
-        self.center_child(win)
+        ctk.CTkButton(
+            bottom,
+            text="Close" if self.lang == "en" else "إغلاق",
+            width=80, height=36,
+            fg_color="transparent", border_width=1,
+            command=win.destroy,
+        ).pack(side="left")
+
+        self._center_child(win)
