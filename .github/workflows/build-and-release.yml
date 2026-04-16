@@ -30,7 +30,7 @@ jobs:
       - name: Build EXE
         shell: pwsh
         run: |
-          $args = @("--onefile", "--noconsole", "--name", "windows_fixer")
+          $args = @("--onefile", "--noconsole", "--name", "windows_fixer", "--collect-all", "winfixer")
 
           # Icon + bundled assets
           if (Test-Path "icon.ico") {

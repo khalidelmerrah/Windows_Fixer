@@ -4,19 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Windows Fixer is a single-file Python desktop application (tkinter GUI) that combines Windows system repair commands (DISM, SFC, CHKDSK) with safe cleanup utilities. It targets Windows 10/11 and supports English and Arabic.
+Windows Fixer is a Python desktop application (tkinter GUI) that combines Windows system repair commands (DISM, SFC, CHKDSK) with safe cleanup utilities. It targets Windows 10/11 and supports English/Arabic with light/dark themes.
 
 ## Build & Run Commands
 
 ```bash
-# Install dependencies (only Pillow is required beyond stdlib; pyinstaller for builds)
+# Install dependencies
 pip install pillow pyinstaller
 
 # Run in development
 python windows_fixer.py
 
 # Build standalone EXE (matches CI pipeline)
-pyinstaller --onefile --noconsole --name windows_fixer --icon icon.ico --add-data "icon.ico;." --add-data "kuwait.png;." --add-data "Success.wav;." windows_fixer.py
+pyinstaller --onefile --noconsole --name windows_fixer --collect-all winfixer --icon icon.ico --add-data "icon.ico;." --add-data "kuwait.png;." --add-data "Success.wav;." windows_fixer.py
 # Output: dist/windows_fixer.exe
 ```
 
@@ -24,30 +24,32 @@ No test suite or linter is configured.
 
 ## Architecture
 
-Everything lives in `windows_fixer.py` (~1,125 lines). Key components:
+The codebase is organized as a `winfixer/` package with a thin entry point:
 
-- **`App(tk.Tk)`** (line ~366) - Main application window. Manages UI, settings, language, and coordinates worker threads. Contains `build_steps()` which defines the ordered list of repair/cleanup operations, and 11 `step_*()` methods that execute individual operations.
-- **`CommandRunner`** (line ~259) - Wraps `subprocess.Popen` for running system commands (DISM, SFC, etc.) with cancel/skip support. Streams stdout line-by-line to the log queue.
-- **Translation** - The `t()` method on `App` returns translated strings. English and Arabic dictionaries are defined inline (~lines 550-635).
-- **Threading model** - UI runs on the main thread. Repair operations run on a worker thread. A `queue.Queue` (`log_queue`) bridges thread-safe log messages back to the UI via `after()` polling.
-- **Settings** - Persisted as JSON at `%APPDATA%\WindowsFixer\settings.json`. Stores admin preference and language selection.
-- **Asset loading** - `resource_path()` (line ~33) resolves assets in three fallback locations: next to the executable, PyInstaller's temp extraction dir (`sys._MEIPASS`), or the current working directory.
+- **`windows_fixer.py`** - Entry point. DPI setup, admin auto-relaunch, launches `App`.
+- **`winfixer/constants.py`** - Version, URLs, window dimensions.
+- **`winfixer/utils.py`** - `resource_path()` (asset resolution with traversal protection), settings load/save with schema validation, admin detection (`is_admin`, `relaunch_as_admin`), drive listing, icon/image helpers, sound playback.
+- **`winfixer/commands.py`** - `CommandRunner` class (subprocess wrapper with cancel/skip via `threading.Event`), cleanup functions (`delete_temp_folders`, `clear_recycle_bin`, `safe_rmtree`), `create_restore_point()`.
+- **`winfixer/translations.py`** - `EN` and `AR` dictionaries with `translate(lang, key)` function. All UI strings live here.
+- **`winfixer/sysinfo.py`** - System info gathering via `ctypes`/`platform`/`wmic`: OS version, CPU, RAM, disk space, uptime.
+- **`winfixer/ui.py`** - `App(tk.Tk)` main window. Contains all UI creation, theming (light/dark via `THEMES` dict + ttk styles), step orchestration, log export, and the About dialog.
 
-## Key Constants
+## Threading Model
 
-- `APP_VERSION` / `APP_ID` - defined at top of file, used throughout UI and settings path
-- `WIN_W` / `WIN_H` - window dimensions (1280x980)
-- GitHub URLs for updates, donations, releases
+UI runs on the main thread. Repair operations run on a daemon worker thread. `queue.Queue` (`log_queue`) bridges log messages to the UI via `after()` polling at 80ms intervals. Cancel/skip signals use `threading.Event` for thread-safe cross-thread communication.
+
+## Settings
+
+Persisted as JSON at `%APPDATA%\WindowsFixer\settings.json`. Schema-validated on load: `always_admin` (bool), `language` ("en"/"ar"), `theme` ("light"/"dark").
 
 ## CI/CD
 
 GitHub Actions workflow (`.github/workflows/build-and-release.yml`):
 - Builds on push to `main` or version tags (`v*.*.*`)
-- Uses Python 3.11, PyInstaller on `windows-latest` runner
+- Uses Python 3.11, PyInstaller with `--collect-all winfixer` on `windows-latest`
 - Tagged pushes create GitHub Releases with zipped EXE + SHA256 checksums
 
 ## Platform Constraints
 
-- **Windows-only** - uses `ctypes.windll` for admin detection, DPI awareness, recycle bin operations, and `winsound` for audio
-- **Requires Administrator** for most repair operations (DISM, SFC, CHKDSK, network reset, prefetch/update cache cleanup)
-- Admin status is detected at startup; the app offers to relaunch elevated via `ShellExecuteW`
+- **Windows-only** - uses `ctypes.windll` for admin detection, DPI awareness, RAM/disk queries, recycle bin, restore points, and `winsound` for audio
+- **Requires Administrator** for most repair operations (DISM, SFC, CHKDSK, network reset, restore points, prefetch/update cache cleanup)
