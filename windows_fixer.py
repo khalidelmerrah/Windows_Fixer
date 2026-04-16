@@ -1,0 +1,1152 @@
+import os
+import sys
+import json
+import shutil
+import ctypes
+import subprocess
+import threading
+import queue
+import tkinter as tk
+from tkinter import ttk, messagebox
+import webbrowser
+from datetime import date
+import re
+import urllib.request
+
+from io import BytesIO
+from PIL import Image, ImageDraw
+import winsound
+
+APP_ID = "WindowsFixer"
+APP_VERSION = "v1.0.0"
+BUILD_DATE = os.environ.get("BUILD_DATE", date.today().isoformat())
+
+DONATE_PAGE = "https://buymeacoffee.com/ilukezippo"
+GITHUB_PAGE = "https://github.com/ilukezippo/Windows_Fixer"
+GITHUB_API_LATEST = "https://api.github.com/repos/ilukezippo/Windows_Fixer/releases/latest"
+GITHUB_RELEASES_PAGE = "https://github.com/ilukezippo/Windows_Fixer/releases"
+
+WIN_W = 1280
+WIN_H = 980
+
+
+def resource_path(relative_path: str) -> str:
+    # Reject path traversal attempts
+    if ".." in relative_path or relative_path.startswith(("/", "\\")):
+        raise ValueError(f"Invalid resource path: {relative_path}")
+    # 1) Prefer files next to the exe (portable)
+    try:
+        if getattr(sys, "frozen", False):
+            exe_dir = os.path.dirname(sys.executable)
+        else:
+            exe_dir = os.path.dirname(os.path.abspath(__file__))
+        candidate = os.path.join(exe_dir, relative_path)
+        if os.path.exists(candidate):
+            return candidate
+    except Exception:
+        pass
+
+    # 2) Fallback to PyInstaller temp extraction
+    try:
+        base_path = sys._MEIPASS  # type: ignore[attr-defined]
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
+
+
+def set_app_icon(root):
+    ico = resource_path("icon.ico")
+    if os.path.exists(ico):
+        try:
+            root.iconbitmap(ico)
+            return ico
+        except Exception:
+            pass
+    return None
+
+
+def apply_icon_to_tlv(tlv, icon):
+    if icon:
+        try:
+            tlv.iconbitmap(icon)
+        except Exception:
+            pass
+
+
+def load_flag_image():
+    png = resource_path("kuwait.png")
+    if os.path.exists(png):
+        try:
+            return tk.PhotoImage(file=png)
+        except Exception:
+            pass
+    return None
+
+
+def make_donate_image(w=160, h=44):
+    r = h // 2
+    top = (255, 187, 71)
+    mid = (247, 162, 28)
+    bot = (225, 140, 22)
+
+    im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    dr = ImageDraw.Draw(im)
+
+    for y in range(h):
+        if y < h * 0.6:
+            t = y / (h * 0.6)
+            c = tuple(int(top[i] * (1 - t) + mid[i] * t) for i in range(3)) + (255,)
+        else:
+            t = (y - h * 0.6) / (h * 0.4)
+            c = tuple(int(mid[i] * (1 - t) + bot[i] * t) for i in range(3)) + (255,)
+        dr.line([(0, y), (w, y)], fill=c)
+
+    mask = Image.new("L", (w, h), 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, w - 1, h - 1], radius=r, fill=255)
+    im.putalpha(mask)
+
+    hl = Image.new("RGBA", (w, h), (255, 255, 255, 0))
+    ImageDraw.Draw(hl).rounded_rectangle([2, 2, w - 3, h // 2], radius=r - 2, fill=(255, 255, 255, 70))
+    im = Image.alpha_composite(im, hl)
+
+    ImageDraw.Draw(im).rounded_rectangle(
+        [0.5, 0.5, w - 1.5, h - 1.5], radius=r, outline=(200, 120, 20, 255), width=2
+    )
+
+    bio = BytesIO()
+    im.save(bio, format="PNG")
+    bio.seek(0)
+    return tk.PhotoImage(data=bio.read())
+
+
+# ✅ FIX: log + run safely (we will call this from main UI thread)
+def play_success_sound(log_cb=None):
+    wav1 = resource_path("success.wav")
+    wav2 = resource_path("Success.wav")
+
+    wav = wav1 if os.path.exists(wav1) else wav2
+
+    if log_cb:
+        log_cb(f"[SOUND] Trying: {wav}")
+        log_cb(f"[SOUND] Exists success.wav: {os.path.exists(wav1)}")
+        log_cb(f"[SOUND] Exists Success.wav: {os.path.exists(wav2)}")
+
+    try:
+        if os.path.exists(wav):
+            # Purge any previous sound + play async
+            winsound.PlaySound(None, winsound.SND_PURGE)
+            winsound.PlaySound(wav, winsound.SND_FILENAME | winsound.SND_ASYNC)
+            if log_cb:
+                log_cb("[SOUND] PlaySound called.")
+            return True
+        else:
+            winsound.MessageBeep(winsound.MB_ICONASTERISK)
+            if log_cb:
+                log_cb("[SOUND] WAV not found -> played system beep.")
+            return False
+    except Exception as e:
+        if log_cb:
+            log_cb(f"[SOUND] Failed: {e}")
+        return False
+
+
+def _settings_path():
+    base = os.environ.get("APPDATA") or os.path.expanduser("~")
+    folder = os.path.join(base, APP_ID)
+    os.makedirs(folder, exist_ok=True)
+    return os.path.join(folder, "settings.json")
+
+
+def _sanitize_settings(data):
+    if not isinstance(data, dict):
+        return {"always_admin": False, "language": "en"}
+    lang = data.get("language", "en")
+    return {
+        "always_admin": bool(data.get("always_admin", False)),
+        "language": lang if lang in ("en", "ar") else "en",
+    }
+
+
+def load_settings():
+    path = _settings_path()
+    try:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                return _sanitize_settings(json.load(f))
+    except (json.JSONDecodeError, OSError, ValueError) as e:
+        print(f"[WARN] Failed to load settings: {e}")
+    return {"always_admin": False, "language": "en"}
+
+
+def save_settings(data: dict):
+    path = _settings_path()
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except OSError as e:
+        print(f"[WARN] Failed to save settings: {e}")
+
+
+def is_admin() -> bool:
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin() != 0
+    except (AttributeError, OSError):
+        return False
+
+
+def relaunch_as_admin():
+    params = subprocess.list2cmdline(sys.argv)
+    ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 0)
+    sys.exit(0)
+
+
+def list_drives():
+    drives = []
+    bitmask = ctypes.windll.kernel32.GetLogicalDrives()
+    for i in range(26):
+        if bitmask & (1 << i):
+            letter = chr(ord("A") + i)
+            path = f"{letter}:\\"
+            if os.path.exists(path):
+                drives.append(f"{letter}:")
+    return drives or ["C:"]
+
+
+def _rmtree_onerror(func, path, exc_info):
+    """Collect rmtree errors instead of silently ignoring them."""
+    safe_rmtree._errors.append(path)
+
+
+def safe_rmtree(path: str, log_cb):
+    try:
+        if os.path.isdir(path) and not os.path.islink(path):
+            safe_rmtree._errors = []
+            shutil.rmtree(path, onerror=_rmtree_onerror)
+            if safe_rmtree._errors:
+                log_cb(f"[WARN] Could not delete {len(safe_rmtree._errors)} item(s) under {path}")
+        else:
+            try:
+                os.remove(path)
+            except PermissionError:
+                log_cb(f"[WARN] Permission denied: {path}")
+            except Exception as e:
+                log_cb(f"[WARN] Could not delete {path}: {e}")
+    except Exception as e:
+        log_cb(f"[WARN] Could not delete {path}: {e}")
+
+
+def delete_temp_folders(delete_prefetch: bool, log_cb, should_abort):
+    targets = []
+    user_temp = os.environ.get("TEMP") or os.path.join(os.environ.get("USERPROFILE", ""), "AppData", "Local", "Temp")
+    if user_temp:
+        targets.append(user_temp)
+
+    win_temp = os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Temp")
+    targets.append(win_temp)
+
+    if delete_prefetch:
+        targets.append(os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Prefetch"))
+
+    for folder in targets:
+        if should_abort():
+            log_cb("[INFO] Aborted cleanup.")
+            return
+
+        if not folder or not os.path.exists(folder):
+            log_cb(f"[INFO] Skip (not found): {folder}")
+            continue
+
+        log_cb(f"[INFO] Cleaning: {folder}")
+        try:
+            for name in os.listdir(folder):
+                if should_abort():
+                    log_cb("[INFO] Aborted cleanup.")
+                    return
+                safe_rmtree(os.path.join(folder, name), log_cb)
+            log_cb(f"[OK] Cleaned: {folder}")
+        except PermissionError:
+            log_cb(f"[WARN] Permission denied: {folder} (try Admin)")
+        except Exception as e:
+            log_cb(f"[WARN] Error cleaning {folder}: {e}")
+
+
+def clear_recycle_bin(log_cb):
+    try:
+        ctypes.windll.shell32.SHEmptyRecycleBinW(None, None, 0x1 | 0x2 | 0x4)
+        log_cb("[OK] Recycle Bin cleared (or already empty).")
+    except Exception as e:
+        log_cb(f"[WARN] Could not clear Recycle Bin: {e}")
+
+
+class CommandRunner:
+    def __init__(self, log_cb):
+        self.log_cb = log_cb
+        self.current_proc = None
+        self._cancel_all = threading.Event()
+        self._skip_step = threading.Event()
+
+    def reset_all(self):
+        self._cancel_all.clear()
+        self._skip_step.clear()
+        self.current_proc = None
+
+    def request_cancel_all(self):
+        self._cancel_all.set()
+        self._terminate_current("Cancel requested")
+
+    def request_skip_step(self):
+        self._skip_step.set()
+        self._terminate_current("Skip requested")
+
+    def reset_flags_for_step(self):
+        self._skip_step.clear()
+
+    def cancel_all_requested(self) -> bool:
+        return self._cancel_all.is_set()
+
+    def skip_requested(self) -> bool:
+        return self._skip_step.is_set()
+
+    def _terminate_current(self, reason: str):
+        if self.current_proc:
+            try:
+                self.log_cb(f"[INFO] {reason}. Terminating current command...")
+                self.current_proc.terminate()
+            except Exception:
+                pass
+
+    def run_cmd(self, cmd):
+        shown = cmd if isinstance(cmd, str) else " ".join(cmd)
+        self.log_cb(f"\n=== RUN: {shown} ===")
+
+        try:
+            self.current_proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                universal_newlines=True,
+            )
+        except Exception as e:
+            self.log_cb(f"[ERROR] Failed to start command: {e}")
+            self.current_proc = None
+            return "error"
+
+        try:
+            if self.current_proc.stdout:
+                for line in self.current_proc.stdout:
+                    if self._cancel_all.is_set():
+                        self._terminate_current("Cancel requested")
+                        break
+                    if self._skip_step.is_set():
+                        self._terminate_current("Skip requested")
+                        break
+                    self.log_cb(line.rstrip("\n"))
+        finally:
+            try:
+                if self.current_proc and self.current_proc.stdout:
+                    self.current_proc.stdout.close()
+            except Exception:
+                pass
+
+        try:
+            if self.current_proc:
+                self.current_proc.wait(timeout=10)
+        except Exception:
+            try:
+                if self.current_proc:
+                    self.current_proc.kill()
+            except Exception:
+                pass
+
+        self.current_proc = None
+
+        if self._cancel_all.is_set():
+            self.log_cb("=== STOPPED (cancel) ===\n")
+            return "cancel"
+        if self._skip_step.is_set():
+            self.log_cb("=== SKIPPED ===\n")
+            return "skip"
+
+        self.log_cb("=== DONE ===\n")
+        return "ok"
+
+
+def add_option_with_desc(parent, text, desc, variable, wrap=560):
+    row = ttk.Frame(parent)
+    row.pack(fill="x", anchor="w", pady=(6, 0))
+
+    cb = ttk.Checkbutton(row, text=text, variable=variable)
+    cb.pack(anchor="w")
+
+    lbl = ttk.Label(row, text=desc, foreground="#666666", wraplength=wrap)
+    lbl.pack(anchor="w", padx=(26, 0))
+    return cb, lbl
+
+
+class App(tk.Tk):
+    def __init__(self):
+        super().__init__()
+
+        self.withdraw()
+
+        self.settings = load_settings()
+        self.lang = self.settings.get("language", "en")
+        self.var_always_admin = tk.BooleanVar(value=bool(self.settings.get("always_admin", False)))
+
+        self.icon_path = set_app_icon(self)
+
+        self.log_queue = queue.Queue()
+        self.runner = CommandRunner(self.enqueue_log)
+        self.worker_thread = None
+        self.running = False
+
+        self.var_select_all = tk.BooleanVar(value=False)
+        self._select_all_guard = False
+
+        self.var_dism_scan = tk.BooleanVar(value=False)
+        self.var_dism_restore = tk.BooleanVar(value=True)
+        self.var_sfc = tk.BooleanVar(value=True)
+        self.var_chkdsk = tk.BooleanVar(value=False)
+        self.var_chkdsk_mode = tk.StringVar(value="scan")
+        self.var_drive = tk.StringVar(value="C:")
+        self.var_reset_network = tk.BooleanVar(value=False)
+
+        self.var_temp = tk.BooleanVar(value=True)
+        self.var_prefetch = tk.BooleanVar(value=False)
+        self.var_recycle_bin = tk.BooleanVar(value=True)
+        self.var_flush_dns = tk.BooleanVar(value=False)
+        self.var_dism_component_cleanup = tk.BooleanVar(value=False)
+        self.var_wu_cache = tk.BooleanVar(value=False)
+
+        self._all_option_vars = [
+            self.var_dism_scan,
+            self.var_dism_restore,
+            self.var_sfc,
+            self.var_chkdsk,
+            self.var_reset_network,
+            self.var_temp,
+            self.var_prefetch,
+            self.var_recycle_bin,
+            self.var_flush_dns,
+            self.var_dism_component_cleanup,
+            self.var_wu_cache,
+        ]
+
+        self.var_step_text = tk.StringVar(value="Idle")
+        self.total_steps = 0
+
+        self.title(f"Windows Fixer {APP_VERSION}")
+        self.geometry(f"{WIN_W}x{WIN_H}")
+        self.minsize(1180, 880)
+
+        self.create_menu()
+        self.create_ui()
+        self.refresh_drive_list()
+
+        self.var_chkdsk.trace_add("write", lambda *_: self.update_chkdsk_controls())
+        self.update_chkdsk_controls()
+
+        for v in self._all_option_vars:
+            v.trace_add("write", lambda *_: self.update_select_all_state())
+
+        self.var_select_all.trace_add("write", lambda *_: self.on_select_all_toggled())
+
+        self.after(80, self.flush_log_queue)
+        self.apply_language()
+        self.update_select_all_state()
+
+        self.after(800, lambda: self.check_latest_app_version_async(show_if_latest=False))
+
+        # ✅ FIX: show first, then center (final)
+        self.deiconify()
+        self.after(50, self.center_window)
+        self.lift()
+        self.focus_force()
+
+    # ---------- Update checker ----------
+    def _parse_ver_tuple(self, v: str):
+        return tuple(int(n) for n in re.findall(r"\d+", v)[:4]) or (0,)
+
+    def manual_check_for_update(self):
+        self.check_latest_app_version_async(show_if_latest=True)
+
+    def check_latest_app_version_async(self, show_if_latest: bool = False):
+        def worker():
+            try:
+                req = urllib.request.Request(GITHUB_API_LATEST, headers={"User-Agent": "Windows-Fixer"})
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    data = json.loads(r.read().decode("utf-8", "replace"))
+
+                raw_tag = str(data.get("tag_name") or data.get("name") or "").strip()
+                tag = re.sub(r"[^v0-9.]", "", raw_tag)
+
+                if tag and self._parse_ver_tuple(tag) > self._parse_ver_tuple(APP_VERSION):
+                    def _ask():
+                        msg = (
+                            f"A newer version {tag} is available.\n\nOpen the releases page?"
+                            if self.lang == "en"
+                            else f"يوجد إصدار أحدث {tag}.\n\nفتح صفحة الإصدارات؟"
+                        )
+                        if messagebox.askyesno("Update" if self.lang == "en" else "تحديث", msg, parent=self):
+                            webbrowser.open(GITHUB_RELEASES_PAGE)
+
+                    self.after(0, _ask)
+                else:
+                    if show_if_latest:
+                        def _info():
+                            msg = "You already have the latest version." if self.lang == "en" else "أنت تستخدم أحدث إصدار."
+                            messagebox.showinfo("Update" if self.lang == "en" else "تحديث", msg, parent=self)
+                        self.after(0, _info)
+
+            except Exception:
+                if show_if_latest:
+                    def _err():
+                        msg = (
+                            "Could not check for updates. Please try again later."
+                            if self.lang == "en"
+                            else "تعذر التحقق من التحديثات. حاول لاحقاً."
+                        )
+                        messagebox.showwarning("Update" if self.lang == "en" else "تحديث", msg, parent=self)
+                    self.after(0, _err)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    # ---------- Center ----------
+    def center_window(self):
+        self.update_idletasks()
+        w = self.winfo_width()
+        h = self.winfo_height()
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+        x = (sw // 2) - (w // 2)
+        y = (sh // 2) - (h // 2)
+        self.geometry(f"{w}x{h}+{x}+{y}")
+
+    def center_child(self, tlv):
+        tlv.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() - tlv.winfo_width()) // 2
+        y = self.winfo_y() + (self.winfo_height() - tlv.winfo_height()) // 2
+        tlv.geometry(f"+{x}+{y}")
+
+    # ---------- Menu ----------
+    def create_menu(self):
+        menubar = tk.Menu(self)
+
+        self.file_menu = tk.Menu(menubar, tearoff=0)
+        self.file_menu.add_checkbutton(
+            label=("Always run as admin" if self.lang == "en" else "تشغيل دائم كمسؤول"),
+            variable=self.var_always_admin,
+            command=self.on_toggle_always_admin,
+        )
+        self.file_menu.add_separator()
+
+        self.lang_menu = tk.Menu(self.file_menu, tearoff=0)
+        self.lang_var = tk.StringVar(value=self.lang)
+        self.lang_menu.add_radiobutton(label="English", value="en", variable=self.lang_var, command=self.on_change_language)
+        self.lang_menu.add_radiobutton(label="العربية", value="ar", variable=self.lang_var, command=self.on_change_language)
+        self.file_menu.add_cascade(label=("Language" if self.lang == "en" else "اللغة"), menu=self.lang_menu)
+
+        self.file_menu.add_separator()
+        self.file_menu.add_command(label=("About" if self.lang == "en" else "حول"), command=self.show_about)
+        self.file_menu.add_separator()
+        self.file_menu.add_command(label=("Exit" if self.lang == "en" else "خروج"), command=self.destroy)
+
+        menubar.add_cascade(label=("File" if self.lang == "en" else "ملف"), menu=self.file_menu)
+        self.config(menu=menubar)
+
+    def on_toggle_always_admin(self):
+        self.settings["always_admin"] = bool(self.var_always_admin.get())
+        save_settings(self.settings)
+        if self.var_always_admin.get() and not is_admin():
+            relaunch_as_admin()
+
+    def on_change_language(self):
+        self.lang = self.lang_var.get()
+        self.settings["language"] = self.lang
+        save_settings(self.settings)
+        self.create_menu()
+        self.apply_language()
+
+    # ---------- Language ----------
+    def t(self, key: str) -> str:
+        en = {
+            "admin_yes": "Admin: YES",
+            "admin_no": "Admin: NO (recommended)",
+            "run_admin": "Run as Admin",
+            "choose_fix": "Choose what to fix",
+            "select_all": "Select All",
+            "repair": "Repair",
+            "cleanup": "Cleanup",
+            "progress": "Progress",
+            "log": "Log",
+            "start": "Start",
+            "skip": "Skip Step",
+            "cancel": "Cancel",
+            "clear_log": "Clear Log",
+            "drive": "Drive:",
+            "refresh": "Refresh",
+            "mode": "Mode:",
+            "scan_only": "Scan only",
+            "fix_f": "Fix errors (/f)",
+            "opt_dism_scan": "Check Windows Image Health (DISM ScanHealth)",
+            "desc_dism_scan": "Checks for corruption in the Windows image. Useful before RestoreHealth.",
+            "opt_dism_restore": "Repair Windows Image (DISM RestoreHealth)",
+            "desc_dism_restore": "Repairs corrupted Windows system image using Windows Update sources.",
+            "opt_sfc": "Repair System Files (SFC ScanNow)",
+            "desc_sfc": "Scans and repairs protected system files. Best after DISM.",
+            "opt_chkdsk": "Check Disk for errors (CHKDSK)",
+            "desc_chkdsk": "Scans the selected drive for file system errors. Fix mode may require reboot.",
+            "opt_reset_net": "Reset Network Stack (Winsock + TCP/IP)",
+            "desc_reset_net": "Fixes common network issues. May require reboot or reconnecting VPN/Wi-Fi.",
+            "opt_temp": "Clean Temporary Files",
+            "desc_temp": "Deletes files from user Temp and Windows Temp. Some locked files may be skipped.",
+            "opt_prefetch": "Clean Prefetch Files",
+            "desc_prefetch": "Cleans Prefetch cache. Windows will recreate it. Admin recommended.",
+            "opt_recycle": "Empty Recycle Bin",
+            "desc_recycle": "Clears deleted files from Recycle Bin to free space immediately.",
+            "opt_dns": "Flush DNS Cache",
+            "desc_dns": "Resets DNS cache (can help with some internet / browsing issues).",
+            "opt_comp": "Clean Windows Component Store (DISM StartComponentCleanup)",
+            "desc_comp": "Removes superseded Windows component versions. Safe but may take time.",
+            "opt_wu": "Fix Windows Update downloads (Clear Update Cache)",
+            "desc_wu": "Stops update services and clears old downloaded update files. Requires Admin.",
+        }
+        ar = {
+            "admin_yes": "المسؤول: نعم",
+            "admin_no": "المسؤول: لا (مُفضل)",
+            "run_admin": "تشغيل كمسؤول",
+            "choose_fix": "اختر عمليات الإصلاح",
+            "select_all": "تحديد الكل",
+            "repair": "إصلاح",
+            "cleanup": "تنظيف",
+            "progress": "التقدم",
+            "log": "السجل",
+            "start": "ابدأ",
+            "skip": "تخطي الخطوة",
+            "cancel": "إلغاء",
+            "clear_log": "مسح السجل",
+            "drive": "القرص:",
+            "refresh": "تحديث",
+            "mode": "الوضع:",
+            "scan_only": "فحص فقط",
+            "fix_f": "إصلاح الأخطاء (/f)",
+            "opt_dism_scan": "فحص سلامة صورة ويندوز (DISM ScanHealth)",
+            "desc_dism_scan": "يفحص وجود تلف في صورة النظام. مفيد قبل RestoreHealth.",
+            "opt_dism_restore": "إصلاح صورة النظام (DISM RestoreHealth)",
+            "desc_dism_restore": "يعالج تلف مكونات ويندوز بالاعتماد على مصادر Windows Update.",
+            "opt_sfc": "إصلاح ملفات النظام (SFC ScanNow)",
+            "desc_sfc": "يفحص ويصلح ملفات النظام المحمية. الأفضل تشغيله بعد DISM.",
+            "opt_chkdsk": "فحص القرص للأخطاء (CHKDSK)",
+            "desc_chkdsk": "يفحص نظام الملفات في القرص المحدد. وضع الإصلاح قد يتطلب إعادة تشغيل.",
+            "opt_reset_net": "إعادة ضبط الشبكة (Winsock + TCP/IP)",
+            "desc_reset_net": "يعالج مشاكل الشبكة الشائعة. قد يتطلب إعادة تشغيل أو إعادة الاتصال.",
+            "opt_temp": "تنظيف الملفات المؤقتة",
+            "desc_temp": "يحذف ملفات Temp للمستخدم و Windows Temp. قد يتم تخطي الملفات المقفلة.",
+            "opt_prefetch": "تنظيف ملفات Prefetch",
+            "desc_prefetch": "ينظف كاش Prefetch وسيقوم ويندوز بإعادة إنشائه. يفضل تشغيله كمسؤول.",
+            "opt_recycle": "تفريغ سلة المحذوفات",
+            "desc_recycle": "يحذف الملفات من سلة المحذوفات لتوفير مساحة فورًا.",
+            "opt_dns": "مسح كاش DNS",
+            "desc_dns": "يعيد ضبط ذاكرة DNS (قد يساعد في بعض مشاكل التصفح/الإنترنت).",
+            "opt_comp": "تنظيف مخزن مكونات ويندوز (DISM StartComponentCleanup)",
+            "desc_comp": "يزيل إصدارات المكونات القديمة (آمن لكنه قد يأخذ وقت).",
+            "opt_wu": "إصلاح تنزيلات تحديثات ويندوز (مسح كاش التحديث)",
+            "desc_wu": "يوقف خدمات التحديث ويمسح ملفات التحديث المحملة. يتطلب تشغيل كمسؤول.",
+        }
+        return (ar if self.lang == "ar" else en).get(key, key)
+
+    def apply_language(self):
+        self.lbl_admin.config(text=(self.t("admin_yes") if is_admin() else self.t("admin_no")))
+        self.btn_admin.config(text=self.t("run_admin"))
+        self.opts_group.config(text=self.t("choose_fix"))
+        self.cb_select_all.config(text=self.t("select_all"))
+        self.lbl_repair.config(text=self.t("repair"))
+        self.lbl_cleanup.config(text=self.t("cleanup"))
+        self.cb_dism_scan.config(text=self.t("opt_dism_scan"))
+        self.desc_dism_scan.config(text=self.t("desc_dism_scan"))
+        self.cb_dism_restore.config(text=self.t("opt_dism_restore"))
+        self.desc_dism_restore.config(text=self.t("desc_dism_restore"))
+        self.cb_sfc.config(text=self.t("opt_sfc"))
+        self.desc_sfc.config(text=self.t("desc_sfc"))
+        self.cb_chkdsk.config(text=self.t("opt_chkdsk"))
+        self.desc_chkdsk.config(text=self.t("desc_chkdsk"))
+        self.cb_reset_net.config(text=self.t("opt_reset_net"))
+        self.desc_reset_net.config(text=self.t("desc_reset_net"))
+        self.lbl_drive.config(text=self.t("drive"))
+        self.btn_drive_refresh.config(text=self.t("refresh"))
+        self.lbl_mode.config(text=self.t("mode"))
+        self.rb_scan.config(text=self.t("scan_only"))
+        self.rb_fix.config(text=self.t("fix_f"))
+        self.cb_temp.config(text=self.t("opt_temp"))
+        self.desc_temp.config(text=self.t("desc_temp"))
+        self.cb_prefetch.config(text=self.t("opt_prefetch"))
+        self.desc_prefetch.config(text=self.t("desc_prefetch"))
+        self.cb_recycle.config(text=self.t("opt_recycle"))
+        self.desc_recycle.config(text=self.t("desc_recycle"))
+        self.cb_dns.config(text=self.t("opt_dns"))
+        self.desc_dns.config(text=self.t("desc_dns"))
+        self.cb_comp.config(text=self.t("opt_comp"))
+        self.desc_comp.config(text=self.t("desc_comp"))
+        self.cb_wu.config(text=self.t("opt_wu"))
+        self.desc_wu.config(text=self.t("desc_wu"))
+        self.prog_group.config(text=self.t("progress"))
+        self.log_group.config(text=self.t("log"))
+        self.btn_start.config(text=self.t("start"))
+        self.btn_skip.config(text=self.t("skip"))
+        self.btn_cancel.config(text=self.t("cancel"))
+        self.btn_clear.config(text=self.t("clear_log"))
+        self.refresh_admin_ui()
+
+    # ---------- Select All ----------
+    def on_select_all_toggled(self):
+        if self._select_all_guard:
+            return
+        self._select_all_guard = True
+        try:
+            val = bool(self.var_select_all.get())
+            for v in self._all_option_vars:
+                v.set(val)
+        finally:
+            self._select_all_guard = False
+
+    def update_select_all_state(self):
+        if self._select_all_guard:
+            return
+        all_on = all(bool(v.get()) for v in self._all_option_vars)
+        self._select_all_guard = True
+        try:
+            self.var_select_all.set(all_on)
+        finally:
+            self._select_all_guard = False
+
+    # ---------- UI ----------
+    def create_ui(self):
+        top = ttk.Frame(self, padding=12)
+        top.pack(fill="x")
+
+        self.lbl_admin = ttk.Label(top, text="")
+        self.lbl_admin.pack(side="left")
+
+        self.btn_admin = ttk.Button(top, text="", command=self.on_run_as_admin)
+        self.btn_admin.pack(side="right")
+
+        self.opts_group = ttk.LabelFrame(self, text="", padding=12)
+        self.opts_group.pack(fill="x", padx=12, pady=8)
+
+        sa_row = ttk.Frame(self.opts_group)
+        sa_row.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 10))
+        self.cb_select_all = ttk.Checkbutton(sa_row, text="", variable=self.var_select_all)
+        self.cb_select_all.pack(anchor="w")
+
+        left = ttk.Frame(self.opts_group)
+        left.grid(row=1, column=0, sticky="nsew", padx=(0, 18))
+
+        right = ttk.Frame(self.opts_group)
+        right.grid(row=1, column=1, sticky="nsew")
+
+        self.lbl_repair = ttk.Label(left, text="", font=("Segoe UI", 10, "bold"))
+        self.lbl_repair.pack(anchor="w")
+
+        self.cb_dism_scan, self.desc_dism_scan = add_option_with_desc(left, "", "", self.var_dism_scan, wrap=640)
+        self.cb_dism_restore, self.desc_dism_restore = add_option_with_desc(left, "", "", self.var_dism_restore, wrap=640)
+        self.cb_sfc, self.desc_sfc = add_option_with_desc(left, "", "", self.var_sfc, wrap=640)
+
+        ch_row = ttk.Frame(left)
+        ch_row.pack(fill="x", anchor="w", pady=(6, 0))
+        self.cb_chkdsk = ttk.Checkbutton(ch_row, text="", variable=self.var_chkdsk)
+        self.cb_chkdsk.pack(anchor="w")
+        self.desc_chkdsk = ttk.Label(ch_row, text="", foreground="#666666", wraplength=640)
+        self.desc_chkdsk.pack(anchor="w", padx=(26, 0))
+
+        sub = ttk.Frame(left)
+        sub.pack(anchor="w", pady=(6, 0), padx=(26, 0))
+        self.lbl_drive = ttk.Label(sub, text="")
+        self.lbl_drive.pack(side="left")
+
+        self.drive_combo = ttk.Combobox(sub, width=8, textvariable=self.var_drive, state="readonly")
+        self.drive_combo.pack(side="left", padx=(6, 10))
+
+        self.btn_drive_refresh = ttk.Button(sub, text="", command=self.refresh_drive_list)
+        self.btn_drive_refresh.pack(side="left")
+
+        mode = ttk.Frame(left)
+        mode.pack(anchor="w", pady=(6, 0), padx=(26, 0))
+        self.lbl_mode = ttk.Label(mode, text="")
+        self.lbl_mode.pack(side="left")
+
+        self.rb_scan = ttk.Radiobutton(mode, text="", value="scan", variable=self.var_chkdsk_mode)
+        self.rb_scan.pack(side="left", padx=8)
+
+        self.rb_fix = ttk.Radiobutton(mode, text="", value="fix", variable=self.var_chkdsk_mode)
+        self.rb_fix.pack(side="left", padx=8)
+
+        self.cb_reset_net, self.desc_reset_net = add_option_with_desc(left, "", "", self.var_reset_network, wrap=640)
+
+        self.lbl_cleanup = ttk.Label(right, text="", font=("Segoe UI", 10, "bold"))
+        self.lbl_cleanup.pack(anchor="w")
+
+        self.cb_temp, self.desc_temp = add_option_with_desc(right, "", "", self.var_temp, wrap=520)
+        self.cb_prefetch, self.desc_prefetch = add_option_with_desc(right, "", "", self.var_prefetch, wrap=520)
+        self.cb_recycle, self.desc_recycle = add_option_with_desc(right, "", "", self.var_recycle_bin, wrap=520)
+        self.cb_dns, self.desc_dns = add_option_with_desc(right, "", "", self.var_flush_dns, wrap=520)
+        self.cb_comp, self.desc_comp = add_option_with_desc(right, "", "", self.var_dism_component_cleanup, wrap=520)
+        self.cb_wu, self.desc_wu = add_option_with_desc(right, "", "", self.var_wu_cache, wrap=520)
+
+        self.opts_group.grid_columnconfigure(0, weight=1)
+        self.opts_group.grid_columnconfigure(1, weight=1)
+
+        self.prog_group = ttk.LabelFrame(self, text="", padding=10)
+        self.prog_group.pack(fill="x", padx=12, pady=(0, 8))
+        ttk.Label(self.prog_group, textvariable=self.var_step_text).pack(anchor="w")
+        self.progress = ttk.Progressbar(self.prog_group, orient="horizontal", mode="determinate", maximum=100)
+        self.progress.pack(fill="x", pady=6)
+
+        btns = ttk.Frame(self, padding=(12, 0, 12, 0))
+        btns.pack(fill="x")
+
+        self.btn_start = ttk.Button(btns, text="", command=self.on_start)
+        self.btn_start.pack(side="left")
+
+        self.btn_skip = ttk.Button(btns, text="", command=self.on_skip, state="disabled")
+        self.btn_skip.pack(side="left", padx=8)
+
+        self.btn_cancel = ttk.Button(btns, text="", command=self.on_cancel, state="disabled")
+        self.btn_cancel.pack(side="left")
+
+        self.btn_clear = ttk.Button(btns, text="", command=self.on_clear)
+        self.btn_clear.pack(side="right")
+
+        self.log_group = ttk.LabelFrame(self, text="", padding=8)
+        self.log_group.pack(fill="both", expand=True, padx=12, pady=10)
+
+        self.txt = tk.Text(self.log_group, wrap="word")
+        self.txt.pack(side="left", fill="both", expand=True)
+
+        sb = ttk.Scrollbar(self.log_group, orient="vertical", command=self.txt.yview)
+        sb.pack(side="right", fill="y")
+        self.txt.config(yscrollcommand=sb.set)
+
+    def refresh_admin_ui(self):
+        self.btn_admin.config(state="disabled" if is_admin() else "normal")
+
+    def update_chkdsk_controls(self):
+        enabled = bool(self.var_chkdsk.get())
+        self.drive_combo.config(state=("readonly" if enabled else "disabled"))
+        self.btn_drive_refresh.config(state=("normal" if enabled else "disabled"))
+        self.rb_scan.config(state=("normal" if enabled else "disabled"))
+        self.rb_fix.config(state=("normal" if enabled else "disabled"))
+
+    def refresh_drive_list(self):
+        drives = list_drives()
+        self.drive_combo["values"] = drives
+        if self.var_drive.get() not in drives:
+            self.var_drive.set(drives[0])
+
+    # ---------- log ----------
+    def enqueue_log(self, msg: str):
+        self.log_queue.put(msg)
+
+    def flush_log_queue(self):
+        try:
+            while True:
+                msg = self.log_queue.get_nowait()
+                self.txt.insert("end", msg + "\n")
+                self.txt.see("end")
+        except queue.Empty:
+            pass
+        self.after(80, self.flush_log_queue)
+
+    def on_clear(self):
+        self.txt.delete("1.0", "end")
+
+    # ---------- run/cancel/skip ----------
+    def set_running(self, running: bool):
+        self.running = running
+        self.btn_start.config(state="disabled" if running else "normal")
+        self.btn_skip.config(state="normal" if running else "disabled")
+        self.btn_cancel.config(state="normal" if running else "disabled")
+        if not running:
+            self.refresh_admin_ui()
+
+    def on_run_as_admin(self):
+        if not is_admin():
+            relaunch_as_admin()
+
+    def on_skip(self):
+        if self.running:
+            self.runner.request_skip_step()
+
+    def on_cancel(self):
+        if self.running:
+            self.runner.request_cancel_all()
+
+    def should_abort_now(self):
+        return self.runner.cancel_all_requested() or self.runner.skip_requested()
+
+    def run_command_step(self, cmd):
+        self.runner.reset_flags_for_step()
+        return self.runner.run_cmd(cmd)
+
+    # ---------- steps ----------
+    def build_steps(self):
+        steps = []
+        if self.var_temp.get() or self.var_prefetch.get():
+            steps.append(("Cleanup (Temp/Prefetch)", self.step_temp_prefetch))
+        if self.var_recycle_bin.get():
+            steps.append(("Empty Recycle Bin", self.step_clear_recycle))
+        if self.var_flush_dns.get():
+            steps.append(("Flush DNS Cache", self.step_flush_dns))
+        if self.var_dism_component_cleanup.get():
+            steps.append(("DISM Component Cleanup", self.step_dism_component_cleanup))
+        if self.var_wu_cache.get():
+            steps.append(("Clear Windows Update Cache", self.step_wu_cache))
+
+        if self.var_dism_scan.get():
+            steps.append(("DISM ScanHealth", self.step_dism_scanhealth))
+        if self.var_dism_restore.get():
+            steps.append(("DISM RestoreHealth", self.step_dism_restorehealth))
+        if self.var_sfc.get():
+            steps.append(("SFC ScanNow", self.step_sfc))
+        if self.var_chkdsk.get():
+            drive = self.var_drive.get().strip().upper()
+            mode = self.var_chkdsk_mode.get()
+            steps.append((f"CHKDSK ({drive}, {mode})", self.step_chkdsk))
+        if self.var_reset_network.get():
+            steps.append(("Reset Network Stack", self.step_reset_network))
+
+        return steps
+
+    def on_start(self):
+        if self.running:
+            return
+
+        self.runner.reset_all()
+
+        steps = self.build_steps()
+        if not steps:
+            messagebox.showwarning(
+                "Nothing selected" if self.lang == "en" else "لا يوجد اختيار",
+                "Select at least one task." if self.lang == "en" else "اختر عملية واحدة على الأقل.",
+                parent=self,
+            )
+            return
+
+        self.total_steps = len(steps)
+        self.progress["value"] = 0
+        self.var_step_text.set("Starting...")
+
+        self.set_running(True)
+        self.enqueue_log(f"--- Windows Fixer {APP_VERSION} ---")
+        self.enqueue_log("Starting...")
+
+        self.worker_thread = threading.Thread(target=self.worker, args=(steps,), daemon=True)
+        self.worker_thread.start()
+
+    def set_progress(self, step_index: int, step_name: str):
+        pct = 0 if self.total_steps <= 0 else int((step_index / self.total_steps) * 100)
+
+        def _ui():
+            self.var_step_text.set(f"Step {step_index}/{self.total_steps}: {step_name}")
+            self.progress["value"] = pct
+
+        self.after(0, _ui)
+
+    def finish_progress(self, msg="Done"):
+        def _ui():
+            self.var_step_text.set(msg)
+            self.progress["value"] = 100
+
+        self.after(0, _ui)
+
+    # ----- step implementations -----
+    def step_temp_prefetch(self):
+        self.runner.reset_flags_for_step()
+        delete_temp_folders(self.var_prefetch.get(), self.enqueue_log, self.should_abort_now)
+        if self.runner.cancel_all_requested():
+            return "cancel"
+        if self.runner.skip_requested():
+            return "skip"
+        return "ok"
+
+    def step_clear_recycle(self):
+        self.runner.reset_flags_for_step()
+        clear_recycle_bin(self.enqueue_log)
+        return "ok"
+
+    def step_flush_dns(self):
+        return self.run_command_step(["ipconfig", "/flushdns"])
+
+    def step_dism_component_cleanup(self):
+        return self.run_command_step(["DISM", "/Online", "/Cleanup-Image", "/StartComponentCleanup"])
+
+    def step_wu_cache(self):
+        self.runner.reset_flags_for_step()
+        if not is_admin():
+            self.enqueue_log("[WARN] Windows Update cache cleanup needs Admin. Skipping.")
+            return "ok"
+
+        r = self.run_command_step(["net", "stop", "wuauserv"])
+        if r in ("cancel", "skip"):
+            return r
+        r = self.run_command_step(["net", "stop", "bits"])
+        if r in ("cancel", "skip"):
+            return r
+
+        windir = os.environ.get("WINDIR", r"C:\Windows")
+        dl = os.path.join(windir, "SoftwareDistribution", "Download")
+        self.enqueue_log(f"[INFO] Cleaning: {dl}")
+
+        try:
+            if os.path.exists(dl):
+                for name in os.listdir(dl):
+                    if self.should_abort_now():
+                        return "skip" if self.runner.skip_requested() else "cancel"
+                    safe_rmtree(os.path.join(dl, name), self.enqueue_log)
+                self.enqueue_log("[OK] Windows Update download cache cleaned.")
+            else:
+                self.enqueue_log("[INFO] Cache folder not found; skip.")
+        except Exception as e:
+            self.enqueue_log(f"[WARN] Could not clean Windows Update cache: {e}")
+
+        r = self.run_command_step(["net", "start", "bits"])
+        if r in ("cancel", "skip"):
+            return r
+        return self.run_command_step(["net", "start", "wuauserv"])
+
+    def step_dism_scanhealth(self):
+        return self.run_command_step(["DISM", "/Online", "/Cleanup-Image", "/ScanHealth"])
+
+    def step_dism_restorehealth(self):
+        return self.run_command_step(["DISM", "/Online", "/Cleanup-Image", "/RestoreHealth"])
+
+    def step_sfc(self):
+        return self.run_command_step(["sfc", "/scannow"])
+
+    def step_chkdsk(self):
+        drive = self.var_drive.get().strip().upper()
+        if not re.fullmatch(r"[A-Z]:", drive):
+            self.enqueue_log(f"[ERROR] Invalid drive letter: {drive}")
+            return "error"
+        mode = self.var_chkdsk_mode.get()
+        if mode == "scan":
+            return self.run_command_step(["chkdsk", drive])
+        self.enqueue_log("[INFO] Fix mode may require restart (Windows may ask to schedule it).")
+        return self.run_command_step(["chkdsk", drive, "/f"])
+
+    def step_reset_network(self):
+        r = self.run_command_step(["netsh", "winsock", "reset"])
+        if r in ("cancel", "skip"):
+            return r
+        return self.run_command_step(["netsh", "int", "ip", "reset"])
+
+    def worker(self, steps):
+        try:
+            for idx, (name, fn) in enumerate(steps, start=1):
+                if self.runner.cancel_all_requested():
+                    self.enqueue_log("[INFO] Cancelled. Stopping all steps.")
+                    self.finish_progress("Cancelled")
+                    return
+
+                self.set_progress(idx, name)
+                result = fn()
+
+                if result == "cancel":
+                    self.enqueue_log("[INFO] Cancelled. Stopping all steps.")
+                    self.finish_progress("Cancelled")
+                    return
+
+                if result == "skip":
+                    self.enqueue_log(f"[INFO] Step skipped: {name}")
+                    continue
+
+            self.finish_progress("Done")
+            self.enqueue_log("All selected tasks finished.")
+
+            # ✅ FIX: play sound on main UI thread (not worker thread)
+            self.after(200, lambda: play_success_sound(self.enqueue_log))
+
+        except Exception as e:
+            self.enqueue_log(f"[ERROR] {e}")
+        finally:
+            self.after(0, lambda: self.set_running(False))
+
+    # ---------- About ----------
+    def show_about(self):
+        win = tk.Toplevel(self)
+        win.title("About" if self.lang == "en" else "حول")
+        win.resizable(False, False)
+        apply_icon_to_tlv(win, self.icon_path)
+
+        frame = ttk.Frame(win, padding=16)
+        frame.pack(fill="both", expand=True)
+
+        title = "Windows Fixer"
+        sub = (
+            "is a freeware Windows repair & cleanup tool.\nRuns SFC, DISM, CHKDSK and safe cleanup tasks."
+            if self.lang == "en"
+            else "أداة مجانية لإصلاح وتنظيف ويندوز.\nتشغل SFC و DISM و CHKDSK مع عمليات تنظيف آمنة."
+        )
+
+        tk.Label(frame, text=title, font=("Segoe UI", 14, "bold")).pack(pady=(0, 4))
+        tk.Label(frame, text=sub, wraplength=520, justify="center").pack(pady=(0, 8))
+        tk.Label(frame, text=f"Version {APP_VERSION} • {BUILD_DATE}").pack(pady=(0, 10))
+
+        row = ttk.Frame(frame)
+        row.pack()
+        tk.Label(row, text="Author: ilukezippo (BoYaqoub)").pack(side="left")
+
+        flag = load_flag_image()
+        if flag:
+            tk.Label(row, image=flag).pack(side="left", padx=(6, 0))
+            win._flag = flag
+
+        link_row = ttk.Frame(frame)
+        link_row.pack(pady=(8, 0))
+        tk.Label(link_row, text=("Info and Latest Updates at " if self.lang == "en" else "المعلومات وآخر التحديثات: ")).pack(
+            side="left"
+        )
+        link = tk.Label(
+            link_row,
+            text=GITHUB_PAGE,
+            fg="#1a73e8",
+            cursor="hand2",
+            font=("Segoe UI", 9, "underline"),
+        )
+        link.pack(side="left")
+        link.bind("<Button-1>", lambda e: webbrowser.open(GITHUB_PAGE))
+
+        donate_img = make_donate_image(160, 44)
+        win._don = donate_img
+        tk.Button(
+            frame,
+            image=donate_img,
+            text=("Donate" if self.lang == "en" else "تبرع"),
+            compound="center",
+            font=("Segoe UI", 11, "bold"),
+            fg="#0f3462",
+            activeforeground="#0f3462",
+            bd=0,
+            highlightthickness=0,
+            cursor="hand2",
+            relief="flat",
+            command=lambda: webbrowser.open(DONATE_PAGE),
+        ).pack(pady=(12, 0))
+
+        ttk.Button(frame, text=("Close" if self.lang == "en" else "إغلاق"), command=win.destroy).pack(pady=(10, 0))
+        self.center_child(win)
+
+
+if __name__ == "__main__":
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(1)
+    except Exception:
+        pass
+
+    settings = load_settings()
+    if bool(settings.get("always_admin", False)) and not is_admin():
+        relaunch_as_admin()
+
+    App().mainloop()
